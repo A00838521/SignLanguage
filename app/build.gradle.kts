@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "com.androidsignfigma.app"
+    namespace = "com.signlearn.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.androidsignfigma.app"
+        applicationId = "com.signlearn.app"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
