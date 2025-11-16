@@ -21,34 +21,31 @@ import com.signlearn.app.ui.theme.SignLearnShapes
 /**
  * SignLearnApp - Componente principal de la aplicación
  *
- * Simula un dispositivo móvil (iPhone 14 Pro: 390x844px) con:
- * - Bordes redondeados
- * - Notch simulado
- * - Navegación entre pantallas
+ * Simula un dispositivo móvil (iPhone 14 Pro: 390x844px)
  */
 @Composable
 fun SignLearnApp() {
     // Estado de navegación
     val navController = rememberNavController()
 
-    // Estado de autenticación (mock mientras no se configure Firebase)
+    // Estado de autenticación
     var isAuthenticated by remember { mutableStateOf(false) }
 
-    // Fondo con gradiente sutil (simulando el contenedor gris del dispositivo)
+    // Fondo gris con gradiente
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFFE2E8F0), // slate-200
-                        Color(0xFFCBD5E1)  // slate-300
+                        Color(0xFFE2E8F0),
+                        Color(0xFFCBD5E1)
                     )
                 )
             ),
         contentAlignment = Alignment.Center
     ) {
-        // Contenedor del dispositivo móvil
+        // Contenedor estilo teléfono
         Box(
             modifier = Modifier
                 .width(390.dp)
@@ -61,30 +58,29 @@ fun SignLearnApp() {
                 .background(MaterialTheme.colorScheme.background)
                 .border(
                     width = 8.dp,
-                    color = Color(0xFF1E293B), // slate-800
+                    color = Color(0xFF1E293B),
                     shape = SignLearnShapes.PhoneContainer
                 )
         ) {
-            // Notch del teléfono (simulando Dynamic Island / Notch)
+            // Notch
             Box(
                 modifier = Modifier
                     .width(160.dp)
                     .height(28.dp)
                     .align(Alignment.TopCenter)
                     .clip(SignLearnShapes.PhoneNotch)
-                    .background(Color(0xFF1E293B)) // slate-800
+                    .background(Color(0xFF1E293B))
             )
 
             // Contenido de la aplicación
-            Box(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // Navegación principal
+            Box(modifier = Modifier.fillMaxSize()) {
+
                 NavHost(
                     navController = navController,
                     startDestination = if (isAuthenticated) "word_of_day" else "login"
                 ) {
-                    // 1. Pantalla de Login/Registro
+
+                    // 1. Login
                     composable("login") {
                         LoginScreen(
                             onLogin = {
@@ -105,7 +101,7 @@ fun SignLearnApp() {
                         )
                     }
 
-                    // 3. Dashboard principal
+                    // 3. Dashboard
                     composable("dashboard") {
                         DashboardScreen(
                             onNavigateToWordOfDay = { navController.navigate("word_of_day") },
@@ -138,7 +134,7 @@ fun SignLearnApp() {
                         )
                     }
 
-                    // 6. Práctica con ejercicios
+                    // 6. Práctica
                     composable("practice") {
                         PracticeScreen(
                             onNavigateBack = { navController.popBackStack() },
@@ -148,37 +144,31 @@ fun SignLearnApp() {
                         )
                     }
 
-                    // 7. Progreso y estadísticas
+                    // 7. Progreso
                     composable("progress") {
                         ProgressScreen(
                             onNavigateBack = { navController.popBackStack() }
                         )
                     }
 
-                    // 8. Configuración y perfil
+                    // 8. Configuración (CORREGIDO)
                     composable("settings") {
                         SettingsScreen(
-                            onNavigateBack = { navController.popBackStack() },
-                            onLogout = {
-                                isAuthenticated = false
-                                navController.navigate("login") {
-                                    popUpTo(0) { inclusive = true }
-                                }
-                            }
+                            onBackClick = { navController.popBackStack() }
                         )
                     }
 
-                    // 9. Diccionario de señas
+                    // 9. Diccionario
                     composable("dictionary") {
                         DictionaryScreen(
                             onNavigateBack = { navController.popBackStack() },
                             onWordClick = { _ ->
-                                // TODO: Navegar a detalle de palabra
+                                // Detalle de palabra (próximamente)
                             }
                         )
                     }
 
-                    // 10. Cámara en vivo / Traductor (con ML Kit en el futuro)
+                    // 10. Cámara / Traductor
                     composable("camera") {
                         CameraTranslatorScreen(
                             onNavigateBack = { navController.popBackStack() }
