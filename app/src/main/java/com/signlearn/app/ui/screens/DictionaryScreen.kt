@@ -14,11 +14,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import com.signlearn.app.ui.theme.*
+import com.signlearn.app.data.model.SignVideo
+import com.signlearn.app.data.firebase.VideoRepository
+import com.signlearn.app.ui.components.VideoPlayer
+import kotlinx.coroutines.launch
+import android.net.Uri
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DictionaryScreen(onNavigateBack: () -> Unit, onWordClick: (String) -> Unit) {
-    val words = remember { (1..20).map { "Palabra $it" } }
+fun DictionaryScreen(
+    onNavigateBack: () -> Unit,
+    videos: List<SignVideo>
+) {
+    val scope = rememberCoroutineScope()
+    val repo = remember { VideoRepository() }
+    var selected by remember { mutableStateOf<SignVideo?>(null) }
+    var videoUrl by remember { mutableStateOf<Uri?>(null) }
+    var loading by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -37,13 +49,42 @@ fun DictionaryScreen(onNavigateBack: () -> Unit, onWordClick: (String) -> Unit) 
                 .padding(16.dp)
         ) {
             LazyVerticalGrid(columns = GridCells.Fixed(2), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(words) { word ->
-                    Card(onClick = { onWordClick(word) }) {
+                items(videos) { v ->
+                    Card(onClick = {
+                        selected = v
+                        loading = true
+                        videoUrl = null
+                        scope.launch {
+                            runCatching { repo.getDownloadUrl(v.storagePath) }
+                                .onSuccess { uri -> videoUrl = uri }
+                                .onFailure { /* TODO: mostrar error si se desea */ }
+                                .also { loading = false }
+                        }
+                    }) {
                         Box(Modifier.height(100.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text(word, style = MaterialTheme.typography.titleMedium)
+                            Text(v.title.ifBlank { v.id }, style = MaterialTheme.typography.titleMedium)
                         }
                     }
                 }
+            }
+
+            if (selected != null) {
+                AlertDialog(
+                    onDismissRequest = { selected = null },
+                    confirmButton = {
+                        TextButton(onClick = { selected = null }) { Text("Cerrar") }
+                    },
+                    title = { Text(selected?.title ?: "") },
+                    text = {
+                        if (loading) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        } else {
+                            videoUrl?.let { uri ->
+                                VideoPlayer(uri = uri, modifier = Modifier.fillMaxWidth().height(220.dp))
+                            } ?: Text("Video no disponible")
+                        }
+                    }
+                )
             }
         }
     }

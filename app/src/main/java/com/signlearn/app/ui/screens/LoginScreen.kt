@@ -18,16 +18,58 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import coil.compose.AsyncImage
 import com.signlearn.app.ui.theme.*
+import com.signlearn.app.R
+import android.app.Activity
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
-    onLogin: () -> Unit
+    onLoginEmail: (String, String) -> Unit,
+    onRegister: (String, String) -> Unit,
+    onLoginGoogleIdToken: (String) -> Unit,
+    onContinueAsGuest: () -> Unit,
+    uiError: String? = null,
+    uiLoading: Boolean = false
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val scope = rememberCoroutineScope()
+    val googleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            val idToken = account.idToken
+            if (idToken != null) {
+                onLoginGoogleIdToken(idToken)
+            } else {
+                localError = "No se obtuvo ID token de Google"
+            }
+        } catch (e: Exception) {
+            localError = e.message
+        }
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "handAnimation")
 
@@ -192,7 +234,7 @@ fun LoginScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Button(
-                    onClick = onLogin,
+                    onClick = { onLoginEmail(email.trim(), password) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
@@ -201,7 +243,7 @@ fun LoginScreen(
                 ) { Text("Iniciar sesión") }
 
                 OutlinedButton(
-                    onClick = onLogin,
+                    onClick = { onRegister(email.trim(), password) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
@@ -229,16 +271,74 @@ fun LoginScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onLogin,
+                        onClick = {
+                            if (activity != null) {
+                                scope.launch {
+                                    isLoading = true
+                                    localError = null
+                                    try {
+                                        val googleIdOption = GetGoogleIdOption.Builder()
+                                            .setFilterByAuthorizedAccounts(false)
+                                            .setServerClientId(activity.getString(R.string.default_web_client_id))
+                                            .build()
+                                        val request = GetCredentialRequest.Builder()
+                                            .addCredentialOption(googleIdOption)
+                                            .build()
+                                        val credManager = CredentialManager.create(activity)
+                                        val result = credManager.getCredential(activity, request)
+                                        val credential = result.credential
+                                        val googleTokenCred = GoogleIdTokenCredential.createFrom(credential.data)
+                                        onLoginGoogleIdToken(googleTokenCred.idToken)
+                                    } catch (e: GetCredentialCancellationException) {
+                                        // usuario canceló
+                                    } catch (e: GetCredentialException) {
+                                        Log.e("LoginScreen", "CredMan error", e)
+                                        // Fallback a GoogleSignInClient clásico
+                                        try {
+                                            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                                                .requestIdToken(activity.getString(R.string.default_web_client_id))
+                                                .requestEmail()
+                                                .build()
+                                            val client = GoogleSignIn.getClient(activity, gso)
+                                            googleLauncher.launch(client.signInIntent)
+                                        } catch (ex: Exception) {
+                                            localError = ex.message
+                                        }
+                                    } catch (e: Exception) {
+                                        localError = e.message
+                                    } finally {
+                                        isLoading = false
+                                    }
+                                }
+                            }
+                        },
                         modifier = Modifier.weight(1f),
                         shape = SignLearnShapes.CategoryButton
                     ) { Text("Google", style = MaterialTheme.typography.bodyMedium) }
 
                     OutlinedButton(
-                        onClick = onLogin,
+                        onClick = onContinueAsGuest,
                         modifier = Modifier.weight(1f),
                         shape = SignLearnShapes.CategoryButton
-                    ) { Text("Facebook", style = MaterialTheme.typography.bodyMedium) }
+                    ) { Text("Invitado", style = MaterialTheme.typography.bodyMedium) }
+                }
+
+                val overallLoading = uiLoading || isLoading
+                val mergedError = uiError ?: localError
+
+                if (overallLoading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                if (mergedError != null) {
+                    AssistChip(
+                        onClick = { },
+                        label = { Text(mergedError) },
+                        leadingIcon = { Icon(Icons.Default.Error, contentDescription = null) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            labelColor = MaterialTheme.colorScheme.error,
+                            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+                        )
+                    )
                 }
             }
         }

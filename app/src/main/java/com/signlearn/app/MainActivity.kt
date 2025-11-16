@@ -10,6 +10,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.signlearn.app.ui.theme.SignLearnTheme
+import com.google.firebase.FirebaseApp
 
 /**
  * MainActivity - Punto de entrada de la aplicación SignLearn
@@ -29,6 +30,9 @@ class MainActivity : ComponentActivity() {
 
         // Habilitar modo edge-to-edge (usar toda la pantalla)
         enableEdgeToEdge()
+
+        // Inicializar Firebase (utiliza google-services.json)
+        FirebaseApp.initializeApp(this)
 
         setContent {
             // Aplicar el tema SignLearn

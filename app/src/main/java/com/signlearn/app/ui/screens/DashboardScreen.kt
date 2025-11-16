@@ -27,13 +27,13 @@ fun DashboardScreen(
     onNavigateToProgress: () -> Unit,
     onNavigateToDictionary: () -> Unit,
     onNavigateToCamera: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    userName: String = "Usuario",
+    totalPoints: Int = 1250,
+    completedLessons: Int = 15,
+    totalLessons: Int = 45
 ) {
-    val userName = "Usuario"
     val currentStreak = 7
-    val totalPoints = 1250
-    val completedLessons = 15
-    val totalLessons = 45
     val progressPercentage = (completedLessons.toFloat() / totalLessons * 100).toInt()
 
     Scaffold(

@@ -24,7 +24,7 @@ import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WordOfTheDayScreen(onNavigateBack: () -> Unit) {
+fun WordOfTheDayScreen(onNavigateBack: () -> Unit, videoTitle: String? = null, videoUri: android.net.Uri? = null) {
     var isVisible by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (isVisible) 1f else 0.8f,
@@ -84,6 +84,15 @@ fun WordOfTheDayScreen(onNavigateBack: () -> Unit) {
                     }
                 }
             }
+            if (videoUri != null) {
+                Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(text = videoTitle ?: "Video", style = MaterialTheme.typography.titleMedium)
+                        com.signlearn.app.ui.components.VideoPlayer(uri = videoUri, modifier = Modifier.fillMaxWidth().height(220.dp))
+                    }
+                }
+            }
+
             Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(text = "Descripción", style = MaterialTheme.typography.titleMedium)

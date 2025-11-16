@@ -13,7 +13,7 @@ import com.signlearn.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProgressScreen(onNavigateBack: () -> Unit) {
+fun ProgressScreen(onNavigateBack: () -> Unit, totalPoints: Int = 0, completedLessons: Int = 0, totalLessons: Int = 0) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -31,8 +31,10 @@ fun ProgressScreen(onNavigateBack: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Estadísticas en construcción", style = MaterialTheme.typography.bodyMedium)
-            LinearProgressIndicator(progress = { 0.5f }, modifier = Modifier.fillMaxWidth().height(8.dp), color = Primary, trackColor = Muted)
+            Text("Puntos totales: $totalPoints", style = MaterialTheme.typography.titleMedium)
+            val ratio = if (totalLessons > 0) completedLessons.toFloat() / totalLessons else 0f
+            LinearProgressIndicator(progress = { ratio.coerceIn(0f,1f) }, modifier = Modifier.fillMaxWidth().height(8.dp), color = Primary, trackColor = Muted)
+            Text("Lecciones completadas: $completedLessons de $totalLessons", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

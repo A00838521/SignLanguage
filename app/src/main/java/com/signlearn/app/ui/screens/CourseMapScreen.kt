@@ -26,7 +26,6 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit)
             LessonItem("Intermedio 2", "Trabajo", false, 0)
         )
     }
-
     Scaffold(
         topBar = {
             TopAppBar(
