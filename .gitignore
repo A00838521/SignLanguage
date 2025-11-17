@@ -1,4 +1,40 @@
-# Compiled class file
+# Android/Gradle
+.idea/
+.gradle/
+local.properties
+**/build/
+*.iml
+
+# Kotlin/Java
+*.log
+
+# VSCode
+.vscode/
+
+# Python venv
+.venv/
+venv/
+
+# Credentials & secrets
+.env*
+*.pem
+*.p12
+*.jks
+*.keystore
+keystore.properties
+credentials/**
+**/service-account*.json
+tools/service-account.json
+**/google-services.json
+
+# Optional: ignore video sources folder (keep Storage as source of truth)
+Proyecto LSM - Videos e Imágenes AD 2022/**
+
+# Node artifacts (if any)
+node_modules/
+
+# MacOS
+.DS_Store# Compiled class file
 *.class
 
 # Log file
