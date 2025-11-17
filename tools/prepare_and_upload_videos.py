@@ -61,11 +61,10 @@ def ensure_gcloud_clients(project_id: str, bucket_name: str | None):
     # Storage client
     st = storage.Client(project=project_id)
     if bucket_name is None:
-        # Default Firebase bucket convention (GCS name)
+        # Default Firebase bucket (may be appspot.com in proyectos antiguos)
         bucket_name = f"{project_id}.appspot.com"
-    # Map Firebase download domain to GCS bucket name if needed
-    gcs_bucket_name = bucket_name.replace('.firebasestorage.app', '.appspot.com')
-    bucket = st.bucket(gcs_bucket_name)
+    # Usa el bucket tal cual; si no existe, el error será claro y el usuario puede ajustar
+    bucket = st.bucket(bucket_name)
     return fs, bucket
 
 
@@ -147,6 +146,7 @@ def main():
     parser.add_argument('--level', default='basico', help='Nivel por defecto (A1/A2/B1 o basico/intermedio/avanzado)')
     parser.add_argument('--public', action='store_true', help='Hacer públicos los objetos (URLs públicas)')
     parser.add_argument('--dry-run', action='store_true', help='No crear documentos en Firestore (solo subir)')
+    parser.add_argument('--create-docs-only', action='store_true', help='Solo crear documentos en Firestore para objetos ya existentes en Storage')
     parser.add_argument('--crf', type=int, default=23, help='Calidad H.264 CRF (menor = más calidad)')
     parser.add_argument('--scale', default='1280:-2', help='Escala de video ffmpeg, p.ej. 1280:-2 (720p) o 960:-2 (540p)')
     parser.add_argument('--audio-bitrate', default='128k', help='Bitrate de audio AAC')
@@ -160,6 +160,33 @@ def main():
     if not base.exists():
         print(f"Base path not found: {base}", file=sys.stderr)
         sys.exit(3)
+
+    # Modo: solo crear documentos, sin transcodificar ni subir
+    if args.create_docs_only:
+        created = 0
+        processed = 0
+        for category, f in iter_video_files(base):
+            processed += 1
+            title = build_title(f.name)
+            slug = slugify(title)
+            storage_path = f"{args.dest_prefix}/{category}/{slug}.mp4"
+            blob = bucket.blob(storage_path)
+            if blob.exists(storage.Client(project=args.project_id)):
+                create_firestore_video(
+                    fs,
+                    doc_id=slug,
+                    title=title,
+                    description=f"Seña: {title}",
+                    storage_path=storage_path,
+                    category=category,
+                    level=args.level,
+                )
+                created += 1
+                print(f"Doc creado: videos/{slug} -> {storage_path}")
+            else:
+                print(f"Omitido (no existe en Storage): {storage_path}")
+        print(f"Listo. Documentos creados: {created}/{processed}")
+        return
 
     tmpdir = Path(tempfile.mkdtemp(prefix='lsm_transcode_'))
     try:
