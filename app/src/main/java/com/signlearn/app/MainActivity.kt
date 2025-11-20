@@ -10,7 +10,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.signlearn.app.ui.theme.SignLearnTheme
+import com.signlearn.app.BuildConfig
 import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 
 /**
  * MainActivity - Punto de entrada de la aplicación SignLearn
@@ -33,6 +37,11 @@ class MainActivity : ComponentActivity() {
 
         // Inicializar Firebase (utiliza google-services.json)
         FirebaseApp.initializeApp(this)
+        // Inicializar App Check: Debug en builds debug, Play Integrity en release
+        FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+            if (BuildConfig.DEBUG) DebugAppCheckProviderFactory.getInstance()
+            else PlayIntegrityAppCheckProviderFactory.getInstance()
+        )
 
         setContent {
             // Aplicar el tema SignLearn

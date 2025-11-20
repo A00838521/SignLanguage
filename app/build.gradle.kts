@@ -46,6 +46,7 @@ android {
     
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     
     packaging {
@@ -151,6 +152,14 @@ dependencies {
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-storage")
+
+    // Firebase App Check (protege acceso a Firestore/Storage)
+    implementation("com.google.firebase:firebase-appcheck-playintegrity")
+    debugImplementation("com.google.firebase:firebase-appcheck-debug")
+
+    // ExoPlayer (Media3) para reproducción optimizada de video
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-ui:1.3.1")
 
     // Credential Manager + Google ID (para Google Sign-In)
     implementation("androidx.credentials:credentials:1.3.0")

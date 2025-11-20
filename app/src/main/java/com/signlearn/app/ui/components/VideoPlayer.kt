@@ -15,13 +15,18 @@ fun VideoPlayer(uri: Uri, modifier: Modifier = Modifier, autoPlay: Boolean = tru
             controller.setAnchorView(this)
             setMediaController(controller)
             setVideoURI(uri)
+            tag = uri
             setOnPreparedListener { mp ->
                 mp.isLooping = loop
                 if (autoPlay) start()
             }
         }
     }, update = { view ->
-        view.setVideoURI(uri)
-        if (autoPlay) view.start()
+        val last = view.tag as? Uri
+        if (last != uri) {
+            view.setVideoURI(uri)
+            view.tag = uri
+            if (autoPlay) view.start()
+        }
     }, modifier = modifier)
 }

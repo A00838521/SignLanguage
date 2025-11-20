@@ -27,6 +27,7 @@ import com.signlearn.app.ui.screens.*
 import com.signlearn.app.ui.theme.SignLearnShapes
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.signlearn.app.ui.util.sanitizeTitle
 import com.signlearn.app.ui.auth.AuthState
 import com.signlearn.app.ui.auth.AuthViewModel
 import com.signlearn.app.data.firebase.UserRepository
@@ -128,17 +129,20 @@ fun SignLearnApp() {
                     }
                     // Palabra del día
                     composable("word_of_day") {
-                        // Cargar lista de videos para elegir la palabra del día (simple: primero)
+                        // Selección determinista diaria: usa el día del año como semilla
                         val videosState = androidx.compose.runtime.produceState<List<SignVideo>>(initialValue = emptyList(), key1 = authState) {
                             value = runCatching { videoRepo.listVideos() }.getOrDefault(emptyList())
                         }
-                        val first = videosState.value.firstOrNull()
-                        val videoUriState = androidx.compose.runtime.produceState<android.net.Uri?>(initialValue = null, key1 = first?.storagePath) {
-                            value = first?.let { runCatching { videoRepo.getDownloadUrl(it.storagePath) }.getOrNull() }
+                        val todayIndex = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)
+                        val selected = videosState.value.let { list ->
+                            if (list.isNotEmpty()) list[todayIndex % list.size] else null
+                        }
+                        val videoUriState = androidx.compose.runtime.produceState<android.net.Uri?>(initialValue = null, key1 = selected?.storagePath) {
+                            value = selected?.let { runCatching { videoRepo.getDownloadUrl(it.storagePath) }.getOrNull() }
                         }
                         WordOfTheDayScreen(
                             onNavigateBack = { navController.navigate("dashboard") },
-                            videoTitle = first?.title,
+                            videoTitle = sanitizeTitle(selected?.title),
                             videoUri = videoUriState.value
                         )
                     }
@@ -257,12 +261,8 @@ fun SignLearnApp() {
                     }
                     // Diccionario de señas
                     composable("dictionary") {
-                        val videos = androidx.compose.runtime.produceState(initialValue = emptyList<SignVideo>(), key1 = authState) {
-                            value = runCatching { videoRepo.listVideos() }.getOrDefault(emptyList())
-                        }
                         DictionaryScreen(
-                            onNavigateBack = { navController.popBackStack() },
-                            videos = videos.value
+                            onNavigateBack = { navController.popBackStack() }
                         )
                     }
                     // Cámara en vivo / Traductor

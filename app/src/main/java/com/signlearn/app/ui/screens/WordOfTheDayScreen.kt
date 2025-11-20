@@ -17,7 +17,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import com.signlearn.app.ui.components.ExoLoopingVideoPlayer
 import com.signlearn.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -35,17 +35,18 @@ fun WordOfTheDayScreen(onNavigateBack: () -> Unit, videoTitle: String? = null, v
 
     val currentDate = remember { SimpleDateFormat("EEEE, d 'de' MMMM", Locale("es", "MX")).format(Date()) }
 
-    val wordOfDay = remember {
+    val wordOfDay = remember(videoTitle) {
+        val title = videoTitle ?: "Seña del día"
         WordData(
-            word = "Gracias",
-            translation = "Thank you",
-            description = "Gesto fundamental de cortesía. Se realiza colocando la mano abierta cerca del pecho y moviendo hacia adelante con un gesto suave.",
+            word = title,
+            translation = "",
+            description = "Explora la seña seleccionada para hoy y practica su movimiento.",
             category = "Básico",
             imageUrl = "https://images.unsplash.com/photo-1573497620053-ea5300f94f21",
             tips = listOf(
-                "Mantén la mano abierta y relajada",
-                "El movimiento debe ser suave y natural",
-                "Puedes acompañar con una sonrisa"
+                "Observa con atención el movimiento",
+                "Repite la seña varias veces",
+                "Practica frente a un espejo"
             )
         )
     }
@@ -72,23 +73,38 @@ fun WordOfTheDayScreen(onNavigateBack: () -> Unit, videoTitle: String? = null, v
             Text(text = currentDate.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Card(modifier = Modifier.fillMaxWidth().scale(scale), elevation = CardDefaults.cardElevation(defaultElevation = 8.dp), shape = SignLearnShapes.CardElevated) {
                 Column {
-                    AsyncImage(
-                        model = wordOfDay.imageUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxWidth().height(220.dp)
-                    )
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(text = wordOfDay.word, style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onBackground)
-                        Text(text = wordOfDay.translation, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        AssistChip(onClick = {}, label = { Text(wordOfDay.category) })
+                    // Migrado a ExoPlayer para mejor manejo de buffers y loop estable
+                    if (videoUri != null) {
+                        ExoLoopingVideoPlayer(
+                            uri = videoUri,
+                            modifier = Modifier.fillMaxWidth().height(220.dp),
+                            autoPlay = true,
+                            loop = true,
+                            useController = false
+                        )
                     }
-                }
-            }
-            if (videoUri != null) {
-                Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(text = videoTitle ?: "Video", style = MaterialTheme.typography.titleMedium)
-                        com.signlearn.app.ui.components.VideoPlayer(uri = videoUri, modifier = Modifier.fillMaxWidth().height(220.dp))
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = wordOfDay.word,
+                            style = MaterialTheme.typography.displaySmall,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (wordOfDay.translation.isNotBlank()) {
+                            Text(
+                                text = wordOfDay.translation,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        AssistChip(onClick = {}, label = { Text(wordOfDay.category) })
                     }
                 }
             }
