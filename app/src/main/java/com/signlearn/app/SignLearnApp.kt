@@ -200,15 +200,24 @@ fun SignLearnApp() {
                             uid = uid
                         )
                     }
-                    // Lecciones
-                    composable("lessons") {
+                    // Lecciones (acepta optional query param `lessonId` para navegar desde mapa)
+                    composable(
+                        route = "lessons?lessonId={lessonId}",
+                        arguments = listOf(navArgument("lessonId") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                            nullable = true
+                        })
+                    ) { backStackEntry ->
                         val uid = (authState as? AuthState.Authenticated)?.user?.uid
+                        val lessonIdArg = backStackEntry.arguments?.getString("lessonId")
                         LessonsScreen(
                             onNavigateBack = { navController.popBackStack() },
                             onLessonClick = { lessonId ->
                                 navController.navigate("practice?lessonId=$lessonId")
                             },
-                            uid = uid
+                            uid = uid,
+                            initialLessonId = lessonIdArg
                         )
                     }
                     // Práctica con ejercicios (acepta optional query param `lessonId`)

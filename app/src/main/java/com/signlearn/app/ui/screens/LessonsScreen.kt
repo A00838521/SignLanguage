@@ -15,11 +15,21 @@ import com.signlearn.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LessonsScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit, uid: String? = null) {
+fun LessonsScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit, uid: String? = null, initialLessonId: String? = null) {
     val vm: CourseViewModel = viewModel()
     val lessons by vm.lessons.collectAsState()
     val unlocked by vm.unlockedLessons.collectAsState()
     val loading by vm.loading.collectAsState()
+
+    LaunchedEffect(initialLessonId, uid) {
+        initialLessonId?.takeIf { it.isNotBlank() }?.let { lid ->
+            if (lid.startsWith("user_")) {
+                val after = lid.removePrefix("user_")
+                val skillId = after.substringBefore("_lesson_")
+                vm.loadLessons(skillId, uid)
+            }
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(

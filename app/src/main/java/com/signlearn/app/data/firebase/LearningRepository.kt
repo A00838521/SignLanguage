@@ -70,6 +70,34 @@ class LearningRepository(private val db: FirebaseFirestore = FirebaseFirestore.g
 
     suspend fun listUnits(): List<LearningUnit> = db.collection("units").get().await().toObjects(LearningUnit::class.java).sortedBy { it.order }
     suspend fun listSkillsForUnit(unitId: String): List<SkillCatalogEntry> = db.collection("skillsCatalog").whereEqualTo("unitId", unitId).get().await().toObjects(SkillCatalogEntry::class.java).sortedBy { it.order }
-    suspend fun listLessonsForSkill(skillId: String): List<Lesson> = db.collection("lessons").whereEqualTo("skillId", skillId).get().await().toObjects(Lesson::class.java).sortedBy { it.order }
-    suspend fun listExercisesForLesson(lessonId: String): List<Exercise> = db.collection("exercises").whereEqualTo("lessonId", lessonId).get().await().toObjects(Exercise::class.java)
+    suspend fun listLessonsForSkill(skillId: String): List<Lesson> {
+        return if (skillId.startsWith("user_skill_")) {
+            // skillId format: user_skill_{uid}_{categorySlug...}
+            val tail = skillId.removePrefix("user_skill_")
+            val idx = tail.indexOf('_')
+            val uid = if (idx >= 0) tail.substring(0, idx) else tail
+            db.collection("users").document(uid).collection("skills").document(skillId).collection("lessons").get().await().toObjects(Lesson::class.java).sortedBy { it.order }
+        } else {
+            db.collection("lessons").whereEqualTo("skillId", skillId).get().await().toObjects(Lesson::class.java).sortedBy { it.order }
+        }
+    }
+
+    suspend fun listExercisesForLesson(lessonId: String): List<Exercise> {
+        return if (lessonId.startsWith("user_")) {
+            // lessonId format: user_{skillId}_lesson_{N}
+            val after = lessonId.removePrefix("user_")
+            val skillId = after.substringBefore("_lesson_")
+            if (skillId.startsWith("user_skill_")) {
+                val tail = skillId.removePrefix("user_skill_")
+                val idx = tail.indexOf('_')
+                val uid = if (idx >= 0) tail.substring(0, idx) else tail
+                db.collection("users").document(uid).collection("skills").document(skillId).collection("exercises").whereEqualTo("lessonId", lessonId).get().await().toObjects(Exercise::class.java)
+            } else {
+                // fallback: try global collection
+                db.collection("exercises").whereEqualTo("lessonId", lessonId).get().await().toObjects(Exercise::class.java)
+            }
+        } else {
+            db.collection("exercises").whereEqualTo("lessonId", lessonId).get().await().toObjects(Exercise::class.java)
+        }
+    }
 }

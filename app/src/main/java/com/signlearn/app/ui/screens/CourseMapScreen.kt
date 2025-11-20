@@ -1,7 +1,7 @@
 package com.signlearn.app.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,17 +9,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.signlearn.app.ui.viewmodel.CourseViewModel
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.signlearn.app.ui.theme.*
+import com.signlearn.app.ui.viewmodel.CourseViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit, uid: String? = null) {
     val vm: CourseViewModel = viewModel()
+    // Cargar categorías dinámicas al entrar en la pantalla
+    LaunchedEffect(uid) { vm.refreshCategories(uid) }
+
     val units by vm.units.collectAsState()
     val skills by vm.skills.collectAsState()
     val lessons by vm.lessons.collectAsState()
@@ -28,9 +32,13 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
     val categories by vm.categories.collectAsState()
     val unlockedCategories by vm.unlockedCategories.collectAsState()
     val loading by vm.loading.collectAsState()
+
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var selectedUnit by remember { mutableStateOf<String?>(null) }
     var selectedSkill by remember { mutableStateOf<String?>(null) }
+
+    val ctx = LocalContext.current
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -51,21 +59,34 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(12.dp))
             }
+
             // Categorías (derivadas dinámicamente de la colección `videos`)
             Text("Categorías", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.heightIn(max = 220.dp)) {
-                items(categories) { c ->
-                    val unlocked = unlockedCategories.contains(c.slug)
-                    val cardColors = if (unlocked) CardDefaults.elevatedCardColors() else CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ElevatedCard(onClick = {
-                        if (unlocked) {
-                            selectedCategory = c.slug
-                        }
-                    }, colors = cardColors) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(c.title, style = MaterialTheme.typography.titleMedium)
-                            Text("${c.count} ejercicios disponibles", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (!unlocked) Text("Bloqueado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+
+            // Expandir la lista para ocupar el espacio restante
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                val sorted = remember(categories, unlockedCategories) {
+                    categories.sortedWith(compareByDescending<com.signlearn.app.data.model.Category> { unlockedCategories.contains(it.slug) }.thenBy { it.title })
+                }
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
+                    items(sorted) { c ->
+                        val unlocked = unlockedCategories.contains(c.slug)
+                        val cardColors = if (unlocked) CardDefaults.elevatedCardColors() else CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ElevatedCard(
+                            onClick = { if (unlocked) selectedCategory = c.slug },
+                            colors = cardColors,
+                            modifier = Modifier.fillMaxWidth().height(92.dp)
+                        ) {
+                            Column(
+                                Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(c.title, style = MaterialTheme.typography.titleMedium)
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text("${c.count} ejercicios disponibles", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (!unlocked) Text("Bloqueado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
                         }
                     }
                 }
@@ -75,8 +96,13 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
             if (selectedCategory != null && uid != null) {
                 LaunchedEffect(selectedCategory) {
                     val skillId = vm.ensureUserExercisesForCategory(uid, selectedCategory!!)
-                    val lessonId = "user_${skillId}_lesson_1"
-                    onLessonClick(lessonId)
+                    if (skillId != null) {
+                        val lessonId = "user_${skillId}_lesson_1"
+                        onLessonClick(lessonId)
+                    } else {
+                        // fallo al crear ejercicios — probablemente permisos Firestore. Mostrar mensaje y no crashear.
+                        Toast.makeText(ctx, "No se pudo crear ejercicios (permiso denegado). Revisa reglas de Firestore o login.", Toast.LENGTH_LONG).show()
+                    }
                     selectedCategory = null
                 }
             } else if (selectedCategory != null && uid == null) {
@@ -86,7 +112,9 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
                     selectedCategory = null
                 }
             }
+
             Spacer(Modifier.height(16.dp))
+
             if (selectedUnit != null) {
                 Text("Skills", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.heightIn(max = 200.dp)) {
@@ -102,7 +130,9 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
                     }
                 }
             }
+
             Spacer(Modifier.height(16.dp))
+
             if (selectedSkill != null) {
                 Text("Lecciones", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

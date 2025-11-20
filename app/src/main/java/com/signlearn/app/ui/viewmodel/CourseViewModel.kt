@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.signlearn.app.data.firebase.LearningRepository
 import com.google.firebase.firestore.FirebaseFirestore
+import android.util.Log
 import kotlinx.coroutines.tasks.await
 import com.signlearn.app.data.model.*
 import com.signlearn.app.data.firebase.UserRepository
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class CourseViewModel(private val repo: LearningRepository = LearningRepository()): ViewModel() {
+    private val TAG = "CourseViewModel"
     private val _units = MutableStateFlow<List<LearningUnit>>(emptyList())
     val units: StateFlow<List<LearningUnit>> = _units
 
@@ -49,12 +51,13 @@ class CourseViewModel(private val repo: LearningRepository = LearningRepository(
                 val videos = videosSnap.documents.mapNotNull { it.toObject(com.signlearn.app.data.model.SignVideo::class.java)?.copy(id = it.id) }
                 val byCategory = videos.groupBy { it.category.ifBlank { "General" } }
                 val list = byCategory.entries.map { (cat, listVideos) ->
-                    val slug = cat.trim().lowercase().replace(Regex("[^a-z0-9]+"), "_")
-                    var title = cat.replace('_', ' ').replace(Regex("\\s+"), " ").trim()
-                    if (title.isNotEmpty()) title = title.substring(0,1).uppercase() + title.substring(1)
+                    val raw = cat
+                    val title = sanitizeCategory(raw)
+                    val slug = title.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
                     com.signlearn.app.data.model.Category(id = "cat_$slug", title = title, slug = slug, count = listVideos.size)
                 }
                 _categories.value = list
+                Log.d(TAG, "refreshCategories: loaded ${list.size} categories")
                 if (uid != null) {
                     val userRepo = UserRepository()
                     val completed = userRepo.getCompletedLessonsCount(uid)
@@ -66,7 +69,8 @@ class CourseViewModel(private val repo: LearningRepository = LearningRepository(
                 } else {
                     _unlockedCategories.value = list.map { it.slug }.toSet()
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.w(TAG, "refreshCategories: error loading categories", e)
                 _categories.value = emptyList()
                 _unlockedCategories.value = emptySet()
             }
@@ -74,56 +78,79 @@ class CourseViewModel(private val repo: LearningRepository = LearningRepository(
         }
     }
 
-    suspend fun ensureUserExercisesForCategory(uid: String, categorySlug: String): String {
-        // crea un documento minimal para la skill del usuario y ejercicios generados bajo users/{uid}/skills/{skillId}
-        val db = FirebaseFirestore.getInstance()
-        val skillId = "user_skill_${uid}_$categorySlug"
-        var title = categorySlug.replace('_', ' ').replace(Regex("\\s+"), " ").trim()
-        if (title.isNotEmpty()) title = title.substring(0,1).uppercase() + title.substring(1)
-        val skillDoc = mapOf("id" to skillId, "title" to title, "categorySlug" to categorySlug, "createdAt" to System.currentTimeMillis())
-        db.collection("users").document(uid).collection("skills").document(skillId).set(skillDoc).await()
+    // Sanitiza nombres de categoría para mostrar en UI y generar slugs predecibles
+    private fun sanitizeCategory(raw: String): String {
+        val base = raw.ifBlank { "General" }
+            .replace('_', ' ')
+            .replace(Regex("\\s+"), " ")
+            .replace(Regex("\\bweb\\b", RegexOption.IGNORE_CASE), "")
+            .trim()
+        if (base.isEmpty()) return "General"
+        return base.split(' ').joinToString(" ") { part ->
+            part.lowercase().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        }
+    }
 
-        // Generar ejercicios simples (no reemplazamos el catálogo global)
-        val allVideos = db.collection("videos").get().await().documents.mapNotNull { it.toObject(com.signlearn.app.data.model.SignVideo::class.java)?.copy(id = it.id) }
-        val videos = allVideos.filter { it.category.ifBlank { "General" }.trim().lowercase().replace(Regex("[^a-z0-9]+"), "_") == categorySlug }
-        val mapped = videos.map { v -> v.title.replace(Regex("\\bWeb\\b", RegexOption.IGNORE_CASE), "").replace('_', ' ').replace("  +".toRegex(), " ").trim() }
-        val titles = mapped.filter { it.isNotBlank() }.distinct()
-        val chosen = if (titles.size >= 10) titles.shuffled().take(10) else {
-            val res = mutableListOf<String>()
-            if (titles.isEmpty()) res.add("-")
-            while (res.size < 10) res.add(titles.randomOrNull() ?: "-")
-            res
-        }
-        val LESSON_EXERCISES = 5
-        val chunks = chosen.chunked(LESSON_EXERCISES)
-        chunks.forEachIndexed { lessonIdx, chunk ->
-            val lessonId = "user_${skillId}_lesson_${lessonIdx + 1}"
-            val lessonDoc = mapOf("id" to lessonId, "title" to "Lección ${lessonIdx + 1}: $title", "order" to (lessonIdx + 1))
-            db.collection("users").document(uid).collection("skills").document(skillId).collection("lessons").document(lessonId).set(lessonDoc).await()
-            chunk.forEachIndexed { exIdx, correctTitle ->
-                val correctVideo = videos.firstOrNull { it.title.replace(Regex("\\bWeb\\b", RegexOption.IGNORE_CASE), "").replace('_', ' ').trim() == correctTitle }
-                val distractPool = titles.filter { it != correctTitle }
-                val distractors = mutableListOf<String>()
-                val pool = distractPool.shuffled().toMutableList()
-                while (distractors.size < 3) {
-                    if (pool.isEmpty()) distractors.add(titles.randomOrNull() ?: "-") else distractors.add(pool.removeAt(0))
-                }
-                val options = (distractors + correctTitle).shuffled()
-                val correctIndex = options.indexOf(correctTitle)
-                val exId = "user_${skillId}_ex_${lessonIdx + 1}_${exIdx + 1}"
-                val exDoc = mapOf(
-                    "id" to exId,
-                    "lessonId" to lessonId,
-                    "prompt" to "Selecciona la palabra que corresponde a la seña:",
-                    "options" to options,
-                    "correctIndex" to correctIndex,
-                    "xpReward" to 10,
-                    "videoStoragePath" to (correctVideo?.storagePath ?: "")
-                )
-                db.collection("users").document(uid).collection("skills").document(skillId).collection("exercises").document(exId).set(exDoc).await()
+    suspend fun ensureUserExercisesForCategory(uid: String, categorySlug: String): String? {
+        // Intenta crear skill + ejercicios bajo users/{uid} pero captura errores de permisos para evitar crash.
+        return try {
+            val db = FirebaseFirestore.getInstance()
+            Log.d(TAG, "ensureUserExercisesForCategory: start uid=$uid category=$categorySlug")
+            val skillId = "user_skill_${uid}_$categorySlug"
+            var title = categorySlug.replace('_', ' ').replace(Regex("\\s+"), " ").trim()
+            if (title.isNotEmpty()) title = title.substring(0,1).uppercase() + title.substring(1)
+            val skillDoc = mapOf("title" to title, "categorySlug" to categorySlug, "createdAt" to System.currentTimeMillis())
+            db.collection("users").document(uid).collection("skills").document(skillId).set(skillDoc).await()
+
+            // Generar ejercicios simples (no reemplazamos el catálogo global)
+            val allVideos = db.collection("videos").get().await().documents.mapNotNull { it.toObject(com.signlearn.app.data.model.SignVideo::class.java)?.copy(id = it.id) }
+            val videos = allVideos.filter { it.category.ifBlank { "General" }.trim().lowercase().replace(Regex("[^a-z0-9]+"), "_") == categorySlug }
+            val mapped = videos.map { v -> v.title.replace(Regex("\\bWeb\\b", RegexOption.IGNORE_CASE), "").replace('_', ' ').replace("  +".toRegex(), " ").trim() }
+            val titles = mapped.filter { it.isNotBlank() }.distinct()
+            val chosen = if (titles.size >= 10) titles.shuffled().take(10) else {
+                val res = mutableListOf<String>()
+                if (titles.isEmpty()) res.add("-")
+                while (res.size < 10) res.add(titles.randomOrNull() ?: "-")
+                res
             }
+            val LESSON_EXERCISES = 5
+            val chunks = chosen.chunked(LESSON_EXERCISES)
+            var lessonsCreated = 0
+            var exercisesCreated = 0
+            chunks.forEachIndexed { lessonIdx, chunk ->
+                val lessonId = "user_${skillId}_lesson_${lessonIdx + 1}"
+                val lessonDoc = mapOf("skillId" to skillId, "title" to "Lección ${lessonIdx + 1}: $title", "order" to (lessonIdx + 1))
+                db.collection("users").document(uid).collection("skills").document(skillId).collection("lessons").document(lessonId).set(lessonDoc).await()
+                lessonsCreated++
+                chunk.forEachIndexed { exIdx, correctTitle ->
+                    val correctVideo = videos.firstOrNull { it.title.replace(Regex("\\bWeb\\b", RegexOption.IGNORE_CASE), "").replace('_', ' ').trim() == correctTitle }
+                    val distractPool = titles.filter { it != correctTitle }
+                    val distractors = mutableListOf<String>()
+                    val pool = distractPool.shuffled().toMutableList()
+                    while (distractors.size < 3) {
+                        if (pool.isEmpty()) distractors.add(titles.randomOrNull() ?: "-") else distractors.add(pool.removeAt(0))
+                    }
+                    val options = (distractors + correctTitle).shuffled()
+                    val correctIndex = options.indexOf(correctTitle)
+                    val exId = "user_${skillId}_ex_${lessonIdx + 1}_${exIdx + 1}"
+                    val exDoc = mapOf(
+                        "lessonId" to lessonId,
+                        "prompt" to "Selecciona la palabra que corresponde a la seña:",
+                        "options" to options,
+                        "correctIndex" to correctIndex,
+                        "xpReward" to 10,
+                        "videoStoragePath" to (correctVideo?.storagePath ?: "")
+                    )
+                    db.collection("users").document(uid).collection("skills").document(skillId).collection("exercises").document(exId).set(exDoc).await()
+                    exercisesCreated++
+                }
+            }
+            Log.d(TAG, "ensureUserExercisesForCategory: created skill=$skillId lessons=$lessonsCreated exercises=$exercisesCreated")
+            skillId
+        } catch (e: Exception) {
+            Log.w(TAG, "ensureUserExercisesForCategory: failed to create user exercises", e)
+            null
         }
-        return skillId
     }
 
     fun seedContent() {
@@ -177,8 +204,17 @@ class CourseViewModel(private val repo: LearningRepository = LearningRepository(
     fun loadLessons(skillId: String, uid: String? = null) {
         viewModelScope.launch {
             _loading.value = true
-            val lessonList = runCatching { repo.listLessonsForSkill(skillId) }.getOrDefault(emptyList())
-            _lessons.value = lessonList
+            var lessonList: List<Lesson> = emptyList()
+            try {
+                Log.d(TAG, "loadLessons: skillId=$skillId uid=$uid")
+                lessonList = repo.listLessonsForSkill(skillId)
+                Log.d(TAG, "loadLessons: fetched ${'$'}{lessonList.size} lessons for skill=$skillId")
+                _lessons.value = lessonList
+            } catch (e: Exception) {
+                Log.w(TAG, "loadLessons: error loading lessons for skill=$skillId", e)
+                _lessons.value = emptyList()
+                lessonList = emptyList()
+            }
             if (uid != null) {
                 val userRepo = UserRepository()
                 val completed = userRepo.getCompletedLessonIds(uid)
