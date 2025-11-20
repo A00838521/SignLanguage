@@ -31,9 +31,11 @@ fun DashboardScreen(
     userName: String = "Usuario",
     totalPoints: Int = 1250,
     completedLessons: Int = 15,
-    totalLessons: Int = 45
+    totalLessons: Int = 45,
+    streak: Int = 0
 ) {
-    val currentStreak = 7
+    // ahora recibe racha desde quien invoca la pantalla
+    var currentStreak by remember { mutableStateOf(streak) }
     val progressPercentage = (completedLessons.toFloat() / totalLessons * 100).toInt()
 
     Scaffold(

@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
 import com.signlearn.app.ui.screens.*
 import com.signlearn.app.ui.theme.SignLearnShapes
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -155,13 +157,17 @@ fun SignLearnApp() {
                                     val uid = st.user.uid
                                     // asegurar perfil mínimo
                                     runCatching { userRepo.ensureUserProfile(uid, st.user.displayName, st.user.email) }
+                                    runCatching { userRepo.updateStreak(uid) }
                                     val profile = runCatching { userRepo.getUserProfile(uid) }.getOrNull()
                                     val completed = runCatching { userRepo.getCompletedLessonsCount(uid) }.getOrDefault(0)
                                     DashboardData(
                                         userName = st.user.displayName ?: (profile?.displayName ?: "Tú"),
                                         totalPoints = profile?.totalPoints ?: 0,
                                         completedLessons = completed,
-                                        totalLessons = 45
+                                        totalLessons = 45,
+                                        streak = profile?.streak ?: 0,
+                                        dailyGoal = profile?.dailyGoal ?: 50,
+                                        xpHistory = profile?.xpHistory ?: emptyList()
                                     )
                                 }
                                 is AuthState.Guest -> DashboardData.guest()
@@ -179,45 +185,47 @@ fun SignLearnApp() {
                             userName = dashboardData.value.userName,
                             totalPoints = dashboardData.value.totalPoints,
                             completedLessons = dashboardData.value.completedLessons,
-                            totalLessons = dashboardData.value.totalLessons
+                            totalLessons = dashboardData.value.totalLessons,
+                            streak = dashboardData.value.streak
                         )
                     }
                     // Mapa del curso
                     composable("course_map") {
+                        val uid = (authState as? AuthState.Authenticated)?.user?.uid
                         CourseMapScreen(
                             onNavigateBack = { navController.popBackStack() },
-                            onLessonClick = { _ ->
-                                navController.navigate("lessons")
-                            }
+                            onLessonClick = { lessonId ->
+                                navController.navigate("lessons?lessonId=$lessonId")
+                            },
+                            uid = uid
                         )
                     }
                     // Lecciones
                     composable("lessons") {
+                        val uid = (authState as? AuthState.Authenticated)?.user?.uid
                         LessonsScreen(
                             onNavigateBack = { navController.popBackStack() },
-                            onLessonClick = { _ ->
-                                navController.navigate("practice")
-                            }
+                            onLessonClick = { lessonId ->
+                                navController.navigate("practice?lessonId=$lessonId")
+                            },
+                            uid = uid
                         )
                     }
-                    // Práctica con ejercicios
-                    composable("practice") {
+                    // Práctica con ejercicios (acepta optional query param `lessonId`)
+                    composable(
+                        route = "practice?lessonId={lessonId}",
+                        arguments = listOf(navArgument("lessonId") {
+                            type = NavType.StringType
+                            defaultValue = "lesson_saludos_1"
+                            nullable = true
+                        })
+                    ) { backStackEntry ->
+                        val lessonIdArg = backStackEntry.arguments?.getString("lessonId") ?: "lesson_saludos_1"
                         PracticeScreen(
                             onNavigateBack = { navController.popBackStack() },
-                            onCompleteExercise = {
-                                when (val st = authState) {
-                                    is AuthState.Authenticated -> {
-                                        scope.launch {
-                                            runCatching {
-                                                userRepo.markLessonCompleted(st.user.uid, "practice1", 10)
-                                                userRepo.addXP(st.user.uid, 10)
-                                            }
-                                        }
-                                    }
-                                    else -> { /* invitado o no auth: no persistir */ }
-                                }
-                                navController.navigate("progress")
-                            }
+                            onCompleteExercise = { /* flujo ahora manejado dentro de PracticeScreen */ },
+                            lessonId = lessonIdArg,
+                            uid = (authState as? AuthState.Authenticated)?.user?.uid
                         )
                     }
 
@@ -227,13 +235,17 @@ fun SignLearnApp() {
                             value = when (val st = authState) {
                                 is AuthState.Authenticated -> {
                                     val uid = st.user.uid
+                                    runCatching { userRepo.updateStreak(uid) }
                                     val profile = runCatching { userRepo.getUserProfile(uid) }.getOrNull()
                                     val completed = runCatching { userRepo.getCompletedLessonsCount(uid) }.getOrDefault(0)
                                     DashboardData(
                                         userName = st.user.displayName ?: profile?.displayName ?: "Tú",
                                         totalPoints = profile?.totalPoints ?: 0,
                                         completedLessons = completed,
-                                        totalLessons = 45
+                                        totalLessons = 45,
+                                        streak = profile?.streak ?: 0,
+                                        dailyGoal = profile?.dailyGoal ?: 50,
+                                        xpHistory = profile?.xpHistory ?: emptyList()
                                     )
                                 }
                                 is AuthState.Guest -> DashboardData.guest()
@@ -244,7 +256,10 @@ fun SignLearnApp() {
                             onNavigateBack = { navController.popBackStack() },
                             totalPoints = data.value.totalPoints,
                             completedLessons = data.value.completedLessons,
-                            totalLessons = data.value.totalLessons
+                            totalLessons = data.value.totalLessons,
+                            streak = data.value.streak,
+                            dailyGoal = data.value.dailyGoal,
+                            xpHistory = data.value.xpHistory
                         )
                     }
                     // Configuración y perfil
@@ -290,14 +305,20 @@ private data class DashboardData(
     val userName: String,
     val totalPoints: Int,
     val completedLessons: Int,
-    val totalLessons: Int
+    val totalLessons: Int,
+    val streak: Int,
+    val dailyGoal: Int,
+    val xpHistory: List<Int>
 ) {
     companion object {
         fun guest() = DashboardData(
             userName = "Invitado",
             totalPoints = 0,
             completedLessons = 0,
-            totalLessons = 45
+            totalLessons = 45,
+            streak = 0,
+            dailyGoal = 50,
+            xpHistory = emptyList()
         )
     }
 }

@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.signlearn.app.ui.viewmodel.CourseViewModel
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
@@ -13,7 +15,11 @@ import com.signlearn.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LessonsScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit) {
+fun LessonsScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit, uid: String? = null) {
+    val vm: CourseViewModel = viewModel()
+    val lessons by vm.lessons.collectAsState()
+    val unlocked by vm.unlockedLessons.collectAsState()
+    val loading by vm.loading.collectAsState()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -30,10 +36,23 @@ fun LessonsScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit) {
                 .background(brush = Brush.verticalGradient(listOf(Primary.copy(alpha = 0.05f), MaterialTheme.colorScheme.background)))
                 .padding(16.dp)
         ) {
-            Text("Contenido de lecciones en construcción", style = MaterialTheme.typography.bodyMedium)
+            if (loading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(12.dp))
+            }
+            Text("Lecciones cargadas: ${lessons.size}", style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(12.dp))
-            Button(onClick = { onLessonClick("lesson1") }, colors = ButtonDefaults.buttonColors(containerColor = Primary), shape = SignLearnShapes.CategoryButton) {
-                Text("Ir a práctica")
+            lessons.forEach { l ->
+                val isUnlocked = unlocked.contains(l.id)
+                val cardColors = if (isUnlocked) CardDefaults.cardColors() else CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                Card(onClick = { if (isUnlocked) onLessonClick(l.id) }, colors = cardColors) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(l.title, style = MaterialTheme.typography.titleMedium)
+                        Text("~${l.estimatedMinutes} min", style = MaterialTheme.typography.labelSmall)
+                        if (!isUnlocked) Text("Bloqueado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
