@@ -18,13 +18,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.signlearn.app.ui.components.ExoLoopingVideoPlayer
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
 import com.signlearn.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WordOfTheDayScreen(onNavigateBack: () -> Unit, videoTitle: String? = null, videoUri: android.net.Uri? = null) {
+fun WordOfTheDayScreen(
+    onNavigateBack: () -> Unit,
+    mediaTitle: String? = null,
+    videoUri: android.net.Uri? = null,
+    imageUri: android.net.Uri? = null,
+    mediaType: String = "video" // "video" | "image"
+) {
     var isVisible by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (isVisible) 1f else 0.8f,
@@ -35,8 +43,8 @@ fun WordOfTheDayScreen(onNavigateBack: () -> Unit, videoTitle: String? = null, v
 
     val currentDate = remember { SimpleDateFormat("EEEE, d 'de' MMMM", Locale("es", "MX")).format(Date()) }
 
-    val wordOfDay = remember(videoTitle) {
-        val title = videoTitle ?: "Seña del día"
+    val wordOfDay = remember(mediaTitle) {
+        val title = mediaTitle ?: "Seña del día"
         WordData(
             word = title,
             translation = "",
@@ -74,14 +82,24 @@ fun WordOfTheDayScreen(onNavigateBack: () -> Unit, videoTitle: String? = null, v
             Card(modifier = Modifier.fillMaxWidth().scale(scale), elevation = CardDefaults.cardElevation(defaultElevation = 8.dp), shape = SignLearnShapes.CardElevated) {
                 Column {
                     // Migrado a ExoPlayer para mejor manejo de buffers y loop estable
-                    if (videoUri != null) {
-                        ExoLoopingVideoPlayer(
-                            uri = videoUri,
-                            modifier = Modifier.fillMaxWidth().height(220.dp),
-                            autoPlay = true,
-                            loop = true,
-                            useController = false
-                        )
+                    when {
+                        mediaType == "video" && videoUri != null -> {
+                            ExoLoopingVideoPlayer(
+                                uri = videoUri,
+                                modifier = Modifier.fillMaxWidth().height(220.dp),
+                                autoPlay = true,
+                                loop = true,
+                                useController = false
+                            )
+                        }
+                        mediaType == "image" && imageUri != null -> {
+                            AsyncImage(
+                                model = imageUri,
+                                contentDescription = mediaTitle,
+                                modifier = Modifier.fillMaxWidth().height(220.dp),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                     }
                     Column(
                         modifier = Modifier.padding(16.dp),

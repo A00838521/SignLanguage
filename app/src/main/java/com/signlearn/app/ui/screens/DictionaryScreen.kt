@@ -27,50 +27,90 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import com.signlearn.app.data.firebase.VideoRepository
+import com.signlearn.app.data.firebase.ImageRepository
 import com.signlearn.app.data.model.SignVideo
+import com.signlearn.app.data.model.SignImage
 import com.signlearn.app.ui.components.ExoLoopingVideoPlayer
 import com.signlearn.app.ui.theme.OnPrimary
 import com.signlearn.app.ui.theme.Primary
 import kotlinx.coroutines.launch
 import com.signlearn.app.ui.util.sanitizeTitle
 import com.signlearn.app.ui.util.formatCategory
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DictionaryScreen(onNavigateBack: () -> Unit) {
-    val repo = remember { VideoRepository() }
+    val videoRepo = remember { VideoRepository() }
+    val imageRepo = remember { ImageRepository() }
     val scope = rememberCoroutineScope()
-    var selected by remember { mutableStateOf<SignVideo?>(null) }
-    var videoUrl by remember { mutableStateOf<Uri?>(null) }
-    var loadingVideo by remember { mutableStateOf(false) }
+
+    var selected by remember { mutableStateOf<DictionaryItem?>(null) }
+    var mediaUrl by remember { mutableStateOf<Uri?>(null) }
+    var loadingMedia by remember { mutableStateOf(false) }
+    // Cache para evitar pedir repetidamente la URL de descarga y reducir jank
+    val urlCache = remember { mutableStateMapOf<String, Uri>() }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Todas") }
     var reloadKey by remember { mutableStateOf(0) }
     var viewMode by remember { mutableStateOf("grid") } // "grid" | "list"
     val debugBorders = false
 
-    // Carga de videos
+    // Carga de videos e imágenes
     val videosState = produceState(initialValue = emptyList<SignVideo>(), key1 = reloadKey) {
         Log.d("DictionaryScreen", "Fetching videos (reloadKey=$reloadKey)...")
-        value = runCatching { repo.listVideos() }
+        value = runCatching { videoRepo.listVideos() }
             .onFailure { Log.e("DictionaryScreen", "Error fetch videos", it) }
             .getOrDefault(emptyList())
         Log.d("DictionaryScreen", "Videos loaded: ${value.size}")
-        value.take(3).forEach { Log.d("DictionaryScreen", "Sample -> id=${it.id} title=${it.title} cat=${it.category} path=${it.storagePath}") }
+    }
+    val imagesState = produceState(initialValue = emptyList<SignImage>(), key1 = reloadKey) {
+        Log.d("DictionaryScreen", "Fetching images (reloadKey=$reloadKey)...")
+        val fetch = runCatching { imageRepo.listImages() }
+        fetch.onFailure { Log.e("DictionaryScreen", "Error fetch images", it) }
+        value = fetch.getOrDefault(emptyList())
+        if (value.isEmpty()) {
+            Log.w("DictionaryScreen", "Images list empty. Verifica reglas Firestore o colección 'images'.")
+        } else {
+            Log.d("DictionaryScreen", "Images loaded: ${value.size}")
+        }
     }
     val videos = videosState.value
-    val categories = remember(videos) { listOf("Todas") + videos.map { it.category }.distinct().sorted() }
+    val images = imagesState.value
+    val items = remember(videos, images) {
+        val vids = videos.map { v ->
+            DictionaryItem(
+                id = v.id,
+                title = v.title.ifBlank { v.id },
+                category = v.category,
+                storagePath = v.storagePath,
+                type = "video"
+            )
+        }
+        val imgs = images.map { i ->
+            DictionaryItem(
+                id = i.id,
+                title = i.title.ifBlank { i.id },
+                category = i.category,
+                storagePath = i.storagePath,
+                type = "image"
+            )
+        }
+        (vids + imgs).sortedBy { it.title.lowercase() }
+    }
+    val categories = remember(items) { listOf("Todas") + items.map { it.category }.distinct().sorted() }
 
-    val filteredVideos = remember(videos, selectedCategory, searchQuery) {
-        val base = if (selectedCategory == "Todas") videos else videos.filter { it.category == selectedCategory }
+    val filteredItems = remember(items, selectedCategory, searchQuery) {
+        val base = if (selectedCategory == "Todas") items else items.filter { it.category == selectedCategory }
         val result = if (searchQuery.isBlank()) base else base.filter {
             val q = searchQuery.lowercase()
             (it.title.lowercase().contains(q) || it.id.lowercase().contains(q))
         }
-        Log.d("DictionaryScreen", "Filtered videos count=${result.size} (query='$searchQuery' cat='$selectedCategory')")
+        Log.d("DictionaryScreen", "Filtered items count=${result.size} (query='$searchQuery' cat='$selectedCategory')")
         result
     }
-    val isLoadingVideos = videos.isEmpty()
+    val isLoading = videos.isEmpty() && images.isEmpty()
 
     Scaffold(
         topBar = {
@@ -131,8 +171,8 @@ fun DictionaryScreen(onNavigateBack: () -> Unit) {
             // Lista única (LazyColumn) que evita el problema de constraints infinitos.
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
-                    isLoadingVideos -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                    filteredVideos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No hay señas para mostrar") }
+                    isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    filteredItems.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No hay señas para mostrar") }
                     else -> if (viewMode == "grid") {
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(2),
@@ -140,16 +180,20 @@ fun DictionaryScreen(onNavigateBack: () -> Unit) {
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            items(filteredVideos, key = { it.id }) { v ->
-                                VideoDictionaryCard(v, debugBorders) {
-                                    selected = v
-                                    loadingVideo = true
-                                    videoUrl = null
+                            items(filteredItems, key = { it.id }) { item ->
+                                DictionaryCard(item, debugBorders) {
+                                    selected = item
+                                    loadingMedia = true
+                                    mediaUrl = null
                                     scope.launch {
-                                        runCatching { repo.getDownloadUrl(v.storagePath) }
-                                            .onSuccess { videoUrl = it }
-                                            .onFailure { Log.e("DictionaryScreen", "Download URL fail", it) }
-                                            .also { loadingVideo = false }
+                                        mediaUrl = urlCache[item.storagePath] ?: run {
+                                            val fetch = runCatching { videoRepo.getDownloadUrl(item.storagePath) }
+                                            fetch.onFailure { Log.e("DictionaryScreen", "Download URL fail", it) }
+                                            val uri = fetch.getOrNull()
+                                            if (uri != null) urlCache[item.storagePath] = uri
+                                            uri
+                                        }
+                                        loadingMedia = false
                                     }
                                 }
                             }
@@ -159,16 +203,20 @@ fun DictionaryScreen(onNavigateBack: () -> Unit) {
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            lazyItems(filteredVideos, key = { it.id }) { v ->
-                                VideoDictionaryCard(v, debugBorders) {
-                                    selected = v
-                                    loadingVideo = true
-                                    videoUrl = null
+                            lazyItems(filteredItems, key = { it.id }) { item ->
+                                DictionaryCard(item, debugBorders) {
+                                    selected = item
+                                    loadingMedia = true
+                                    mediaUrl = null
                                     scope.launch {
-                                        runCatching { repo.getDownloadUrl(v.storagePath) }
-                                            .onSuccess { videoUrl = it }
-                                            .onFailure { Log.e("DictionaryScreen", "Download URL fail", it) }
-                                            .also { loadingVideo = false }
+                                        mediaUrl = urlCache[item.storagePath] ?: run {
+                                            val fetch = runCatching { videoRepo.getDownloadUrl(item.storagePath) }
+                                            fetch.onFailure { Log.e("DictionaryScreen", "Download URL fail", it) }
+                                            val uri = fetch.getOrNull()
+                                            if (uri != null) urlCache[item.storagePath] = uri
+                                            uri
+                                        }
+                                        loadingMedia = false
                                     }
                                 }
                             }
@@ -181,20 +229,29 @@ fun DictionaryScreen(onNavigateBack: () -> Unit) {
             AlertDialog(
                 onDismissRequest = { selected = null },
                 confirmButton = { TextButton(onClick = { selected = null }) { Text("Cerrar") } },
-                title = { Text(sanitizeTitle(selected?.title)) },
+                title = { Text(sanitizeTitle(selected?.title ?: "")) },
                 text = {
-                    if (loadingVideo) {
+                    if (loadingMedia) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     } else {
-                        videoUrl?.let { uri ->
-                            ExoLoopingVideoPlayer(
-                                uri = uri,
-                                modifier = Modifier.fillMaxWidth().height(220.dp),
-                                autoPlay = true,
-                                loop = true,
-                                useController = true
-                            )
-                        } ?: Text("Video no disponible")
+                        mediaUrl?.let { uri ->
+                            if (selected?.type == "video") {
+                                ExoLoopingVideoPlayer(
+                                    uri = uri,
+                                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                                    autoPlay = true,
+                                    loop = true,
+                                    useController = true
+                                )
+                            } else {
+                                AsyncImage(
+                                    model = uri,
+                                    contentDescription = selected?.title,
+                                    modifier = Modifier.fillMaxWidth().height(260.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+                        } ?: Text(if (selected?.type == "video") "Video no disponible" else "Imagen no disponible")
                     }
                 }
             )
@@ -203,7 +260,7 @@ fun DictionaryScreen(onNavigateBack: () -> Unit) {
 }
 
 @Composable
-private fun VideoDictionaryCard(video: SignVideo, debugBorders: Boolean, onClick: () -> Unit) {
+private fun DictionaryCard(item: DictionaryItem, debugBorders: Boolean, onClick: () -> Unit) {
     val borderModifier = if (debugBorders) Modifier.border(1.dp, MaterialTheme.colorScheme.primary) else Modifier
     Card(
         modifier = Modifier
@@ -221,19 +278,29 @@ private fun VideoDictionaryCard(video: SignVideo, debugBorders: Boolean, onClick
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                sanitizeTitle(video.title.ifBlank { video.id }),
+                sanitizeTitle(item.title.ifBlank { item.id }),
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 2,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                formatCategory(video.category),
+                formatCategory(item.category),
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 color = MaterialTheme.colorScheme.primary
             )
+            Spacer(Modifier.height(4.dp))
+            AssistChip(onClick = onClick, label = { Text(if (item.type == "video") "Video" else "Imagen") })
         }
     }
 }
+
+private data class DictionaryItem(
+    val id: String,
+    val title: String,
+    val category: String,
+    val storagePath: String,
+    val type: String // "video" | "image"
+)

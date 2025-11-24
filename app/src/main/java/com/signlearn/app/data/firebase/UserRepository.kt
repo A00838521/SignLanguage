@@ -5,6 +5,8 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.signlearn.app.data.model.UserProgress
 import com.signlearn.app.data.model.UserProfile
+import com.signlearn.app.data.model.WeeklyStats
+import com.signlearn.app.data.model.UserPracticeState
 import kotlinx.coroutines.tasks.await
 
 class UserRepository(private val db: FirebaseFirestore = FirebaseFirestore.getInstance()) {
@@ -110,6 +112,49 @@ class UserRepository(private val db: FirebaseFirestore = FirebaseFirestore.getIn
             db.collection("users").document(uid).collection("progress").get().await().documents.mapNotNull { it.id }.toSet()
         } catch (e: Exception) {
             emptySet()
+        }
+    }
+
+    suspend fun getWeeklyStats(uid: String): WeeklyStats {
+        return try {
+            val now = System.currentTimeMillis()
+            val weekAgo = now - 7L * 24L * 60L * 60L * 1000L
+            val progressSnap = db.collection("users").document(uid).collection("progress").get().await()
+            val progress = progressSnap.documents.mapNotNull { it.toObject(UserProgress::class.java) }
+                .filter { it.completedAt >= weekAgo }
+            val lessonsCompleted = progress.size
+            val scores = progress.map { it.score }.filter { it > 0 }
+            val avgScore = if (scores.isNotEmpty()) scores.average().toInt().coerceIn(0, 100) else 0
+            val profile = getUserProfile(uid)
+            val xpHistory = profile?.xpHistory ?: emptyList()
+            val xpWeek = xpHistory.takeLast(7).sum()
+            // Estimación: 10 XP ≈ 1 ejercicio, 1 ejercicio ≈ 30s => 2 ejercicios/min
+            val practiceMinutes = if (xpWeek > 0) ((xpWeek / 10.0) / 2.0).toInt().coerceAtLeast(1) else 0
+            WeeklyStats(
+                lessonsCompleted = lessonsCompleted,
+                totalXp = xpWeek,
+                averageScore = avgScore,
+                practiceMinutes = practiceMinutes
+            )
+        } catch (e: Exception) {
+            WeeklyStats()
+        }
+    }
+
+    suspend fun getPracticeState(uid: String): UserPracticeState? {
+        return try {
+            db.collection("users").document(uid)
+                .collection("state").document("practice")
+                .get().await().toObject(UserPracticeState::class.java)
+        } catch (e: Exception) { null }
+    }
+
+    suspend fun setPracticeState(uid: String, lessonId: String, exerciseIndex: Int) {
+        val state = UserPracticeState(lessonId = lessonId, exerciseIndex = exerciseIndex, updatedAt = System.currentTimeMillis())
+        runCatching {
+            db.collection("users").document(uid)
+                .collection("state").document("practice")
+                .set(state).await()
         }
     }
 }

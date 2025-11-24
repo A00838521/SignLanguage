@@ -34,6 +34,7 @@ import com.signlearn.app.ui.auth.AuthState
 import com.signlearn.app.ui.auth.AuthViewModel
 import com.signlearn.app.data.firebase.UserRepository
 import com.signlearn.app.data.firebase.VideoRepository
+import com.signlearn.app.data.firebase.ImageRepository
 import com.signlearn.app.data.model.SignVideo
 import kotlinx.coroutines.launch
 
@@ -52,68 +53,28 @@ fun SignLearnApp() {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     val userRepo = remember { UserRepository() }
     val videoRepo = remember { VideoRepository() }
+    val imageRepo = remember { ImageRepository() }
     val scope = rememberCoroutineScope()
 
-    // Navegación reactiva según estado de autenticación
     LaunchedEffect(authState) {
         when (authState) {
             is AuthState.Authenticated -> {
-                navController.navigate("word_of_day") {
-                    popUpTo("login") { inclusive = true }
-                }
+                navController.navigate("word_of_day") { popUpTo("login") { inclusive = true } }
             }
             is AuthState.Guest -> {
-                navController.navigate("dashboard") {
-                    popUpTo("login") { inclusive = true }
-                }
+                navController.navigate("dashboard") { popUpTo("login") { inclusive = true } }
             }
-            else -> { /* Mantener login */ }
+            else -> { }
         }
     }
 
+    // Layout sin marco de iPhone: NavHost ocupa toda la pantalla
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFFE2E8F0),
-                        Color(0xFFCBD5E1)
-                    )
-                )
-            ),
-        contentAlignment = Alignment.Center
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        // Contenedor del dispositivo móvil
-        Box(
-            modifier = Modifier
-                .width(390.dp)
-                .height(844.dp)
-                .shadow(
-                    elevation = 24.dp,
-                    shape = SignLearnShapes.PhoneContainer
-                )
-                .clip(SignLearnShapes.PhoneContainer)
-                .background(MaterialTheme.colorScheme.background)
-                .border(
-                    width = 8.dp,
-                    color = Color(0xFF1E293B), // slate-800
-                    shape = SignLearnShapes.PhoneContainer
-                )
-        ) {
-            // Notch del teléfono (simulando Dynamic Island / Notch)
-            Box(
-                modifier = Modifier
-                    .width(160.dp)
-                    .height(28.dp)
-                    .align(Alignment.TopCenter)
-                    .clip(SignLearnShapes.PhoneNotch)
-                    .background(Color(0xFF1E293B)) // slate-800
-            )
-
-            // Contenido de la aplicación
-            Box(modifier = Modifier.fillMaxSize()) {
-                NavHost(navController = navController, startDestination = "login") {
+        NavHost(navController = navController, startDestination = "login") {
                     composable("login") {
                         val (loading, error) = when (val st = authState) {
                             is AuthState.Loading -> true to null
@@ -131,21 +92,30 @@ fun SignLearnApp() {
                     }
                     // Palabra del día
                     composable("word_of_day") {
-                        // Selección determinista diaria: usa el día del año como semilla
+                        // Cargar videos e imágenes y elegir deterministamente según día del año
                         val videosState = androidx.compose.runtime.produceState<List<SignVideo>>(initialValue = emptyList(), key1 = authState) {
                             value = runCatching { videoRepo.listVideos() }.getOrDefault(emptyList())
                         }
-                        val todayIndex = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)
-                        val selected = videosState.value.let { list ->
-                            if (list.isNotEmpty()) list[todayIndex % list.size] else null
+                        val imagesState = androidx.compose.runtime.produceState<List<com.signlearn.app.data.model.SignImage>>(initialValue = emptyList(), key1 = authState) {
+                            value = runCatching { imageRepo.listImages() }.getOrDefault(emptyList())
                         }
-                        val videoUriState = androidx.compose.runtime.produceState<android.net.Uri?>(initialValue = null, key1 = selected?.storagePath) {
+                        data class MediaItem(val id: String, val title: String, val storagePath: String, val type: String)
+                        val combined = remember(videosState.value, imagesState.value) {
+                            val vids = videosState.value.map { MediaItem(it.id, it.title.ifBlank { it.id }, it.storagePath, "video") }
+                            val imgs = imagesState.value.map { MediaItem(it.id, it.title.ifBlank { it.id }, it.storagePath, "image") }
+                            (vids + imgs)
+                        }
+                        val todayIndex = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)
+                        val selected = combined.let { list -> if (list.isNotEmpty()) list[todayIndex % list.size] else null }
+                        val mediaUriState = androidx.compose.runtime.produceState<android.net.Uri?>(initialValue = null, key1 = selected?.storagePath) {
                             value = selected?.let { runCatching { videoRepo.getDownloadUrl(it.storagePath) }.getOrNull() }
                         }
                         WordOfTheDayScreen(
                             onNavigateBack = { navController.navigate("dashboard") },
-                            videoTitle = sanitizeTitle(selected?.title),
-                            videoUri = videoUriState.value
+                            mediaTitle = sanitizeTitle(selected?.title),
+                            videoUri = if (selected?.type == "video") mediaUriState.value else null,
+                            imageUri = if (selected?.type == "image") mediaUriState.value else null,
+                            mediaType = selected?.type ?: "video"
                         )
                     }
                     // Dashboard principal
@@ -160,6 +130,7 @@ fun SignLearnApp() {
                                     runCatching { userRepo.updateStreak(uid) }
                                     val profile = runCatching { userRepo.getUserProfile(uid) }.getOrNull()
                                     val completed = runCatching { userRepo.getCompletedLessonsCount(uid) }.getOrDefault(0)
+                                    val weekly = runCatching { userRepo.getWeeklyStats(uid) }.getOrDefault(com.signlearn.app.data.model.WeeklyStats())
                                     DashboardData(
                                         userName = st.user.displayName ?: (profile?.displayName ?: "Tú"),
                                         totalPoints = profile?.totalPoints ?: 0,
@@ -167,7 +138,10 @@ fun SignLearnApp() {
                                         totalLessons = 45,
                                         streak = profile?.streak ?: 0,
                                         dailyGoal = profile?.dailyGoal ?: 50,
-                                        xpHistory = profile?.xpHistory ?: emptyList()
+                                        xpHistory = profile?.xpHistory ?: emptyList(),
+                                        weeklyLessons = weekly.lessonsCompleted,
+                                        weeklyPracticeMinutes = weekly.practiceMinutes,
+                                        weeklyAccuracy = weekly.averageScore
                                     )
                                 }
                                 is AuthState.Guest -> DashboardData.guest()
@@ -177,7 +151,7 @@ fun SignLearnApp() {
                         DashboardScreen(
                             onNavigateToWordOfDay = { navController.navigate("word_of_day") },
                             onNavigateToCourseMap = { navController.navigate("course_map") },
-                            onNavigateToPractice = { navController.navigate("practice") },
+                            onNavigateToPractice = { navController.navigate("practice?lessonId=auto") },
                             onNavigateToProgress = { navController.navigate("progress") },
                             onNavigateToDictionary = { navController.navigate("dictionary") },
                             onNavigateToCamera = { navController.navigate("camera") },
@@ -186,7 +160,10 @@ fun SignLearnApp() {
                             totalPoints = dashboardData.value.totalPoints,
                             completedLessons = dashboardData.value.completedLessons,
                             totalLessons = dashboardData.value.totalLessons,
-                            streak = dashboardData.value.streak
+                            streak = dashboardData.value.streak,
+                            weeklyLessons = dashboardData.value.weeklyLessons,
+                            weeklyPracticeMinutes = dashboardData.value.weeklyPracticeMinutes,
+                            weeklyAccuracy = dashboardData.value.weeklyAccuracy
                         )
                     }
                     // Mapa del curso
@@ -232,7 +209,7 @@ fun SignLearnApp() {
                         val lessonIdArg = backStackEntry.arguments?.getString("lessonId") ?: "lesson_saludos_1"
                         PracticeScreen(
                             onNavigateBack = { navController.popBackStack() },
-                            onCompleteExercise = { /* flujo ahora manejado dentro de PracticeScreen */ },
+                            onCompleteExercise = { },
                             lessonId = lessonIdArg,
                             uid = (authState as? AuthState.Authenticated)?.user?.uid
                         )
@@ -247,6 +224,7 @@ fun SignLearnApp() {
                                     runCatching { userRepo.updateStreak(uid) }
                                     val profile = runCatching { userRepo.getUserProfile(uid) }.getOrNull()
                                     val completed = runCatching { userRepo.getCompletedLessonsCount(uid) }.getOrDefault(0)
+                                    val weekly = runCatching { userRepo.getWeeklyStats(uid) }.getOrDefault(com.signlearn.app.data.model.WeeklyStats())
                                     DashboardData(
                                         userName = st.user.displayName ?: profile?.displayName ?: "Tú",
                                         totalPoints = profile?.totalPoints ?: 0,
@@ -254,7 +232,10 @@ fun SignLearnApp() {
                                         totalLessons = 45,
                                         streak = profile?.streak ?: 0,
                                         dailyGoal = profile?.dailyGoal ?: 50,
-                                        xpHistory = profile?.xpHistory ?: emptyList()
+                                        xpHistory = profile?.xpHistory ?: emptyList(),
+                                        weeklyLessons = weekly.lessonsCompleted,
+                                        weeklyPracticeMinutes = weekly.practiceMinutes,
+                                        weeklyAccuracy = weekly.averageScore
                                     )
                                 }
                                 is AuthState.Guest -> DashboardData.guest()
@@ -295,16 +276,11 @@ fun SignLearnApp() {
                             onNavigateBack = { navController.popBackStack() }
                         )
                     }
-                }
-            }
         }
     }
 }
 
-@androidx.compose.ui.tooling.preview.Preview(
-    showBackground = true,
-    device = "spec:width=390dp,height=844dp"
-)
+@androidx.compose.ui.tooling.preview.Preview(showBackground = true)
 @Composable
 fun SignLearnAppPreview() {
     SignLearnApp()
@@ -317,7 +293,10 @@ private data class DashboardData(
     val totalLessons: Int,
     val streak: Int,
     val dailyGoal: Int,
-    val xpHistory: List<Int>
+    val xpHistory: List<Int>,
+    val weeklyLessons: Int,
+    val weeklyPracticeMinutes: Int,
+    val weeklyAccuracy: Int
 ) {
     companion object {
         fun guest() = DashboardData(
@@ -327,7 +306,10 @@ private data class DashboardData(
             totalLessons = 45,
             streak = 0,
             dailyGoal = 50,
-            xpHistory = emptyList()
+            xpHistory = emptyList(),
+            weeklyLessons = 0,
+            weeklyPracticeMinutes = 0,
+            weeklyAccuracy = 0
         )
     }
 }

@@ -32,10 +32,12 @@ fun DashboardScreen(
     totalPoints: Int = 1250,
     completedLessons: Int = 15,
     totalLessons: Int = 45,
-    streak: Int = 0
+    streak: Int = 0,
+    weeklyLessons: Int = 0,
+    weeklyPracticeMinutes: Int = 0,
+    weeklyAccuracy: Int = 0
 ) {
-    // ahora recibe racha desde quien invoca la pantalla
-    var currentStreak by remember { mutableStateOf(streak) }
+    // Usar directamente la racha pasada para permitir recomposición correcta
     val progressPercentage = (completedLessons.toFloat() / totalLessons * 100).toInt()
 
     Scaffold(
@@ -83,7 +85,7 @@ fun DashboardScreen(
             ) {
                 StatsCard(
                     icon = Icons.Default.Whatshot,
-                    value = "$currentStreak días",
+                    value = "$streak días",
                     label = "Racha actual",
                     color = TertiaryLight,
                     modifier = Modifier.weight(1f)
@@ -165,9 +167,12 @@ fun DashboardScreen(
             Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(text = "Esta semana", style = MaterialTheme.typography.titleMedium)
-                    WeeklyStatRow(icon = Icons.Default.School, label = "Lecciones completadas", value = "5")
-                    WeeklyStatRow(icon = Icons.Default.Timer, label = "Tiempo de práctica", value = "2h 30m")
-                    WeeklyStatRow(icon = Icons.Default.CheckCircle, label = "Precisión", value = "92%")
+                    WeeklyStatRow(icon = Icons.Default.School, label = "Lecciones completadas", value = weeklyLessons.toString())
+                    val hours = weeklyPracticeMinutes / 60
+                    val mins = weeklyPracticeMinutes % 60
+                    val practiceLabel = if (hours > 0) "${hours}h ${mins}m" else "${mins}m"
+                    WeeklyStatRow(icon = Icons.Default.Timer, label = "Tiempo de práctica", value = practiceLabel)
+                    WeeklyStatRow(icon = Icons.Default.CheckCircle, label = "Precisión", value = "${weeklyAccuracy}%")
                     Button(onClick = onNavigateToProgress, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Primary), shape = SignLearnShapes.CategoryButton) {
                         Text("Ver estadísticas completas")
                     }
@@ -196,13 +201,14 @@ fun StatsCard(
 }
 
 @Composable
-fun QuickAccessCard(icon: ImageVector, title: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Card(modifier = modifier.clickable(onClick = onClick), elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
+fun QuickAccessCard(icon: ImageVector, title: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val alpha = if (enabled) 1f else 0.4f
+    Card(modifier = modifier.then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier), elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Surface(color = Primary.copy(alpha = 0.1f), shape = SignLearnShapes.Pill, modifier = Modifier.size(48.dp)) {
+            Surface(color = Primary.copy(alpha = 0.1f * alpha), shape = SignLearnShapes.Pill, modifier = Modifier.size(48.dp)) {
                 Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null, tint = Primary, modifier = Modifier.size(24.dp)) }
             }
-            Text(text = title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(text = title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
         }
     }
 }

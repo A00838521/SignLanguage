@@ -36,7 +36,12 @@ data class Exercise(
     val options: List<String> = emptyList(),
     val correctIndex: Int = 0,
     val xpReward: Int = 10,
-    val videoStoragePath: String? = null
+    // Campo legado para ejercicios existentes con solo video
+    val videoStoragePath: String? = null,
+    // Tipo de medio principal: "video" | "image" (default video para compatibilidad)
+    val mediaType: String = "video",
+    // Ruta en Storage del medio (video o imagen)
+    val mediaStoragePath: String? = null
 )
 
 // Progreso de skill para usuario
