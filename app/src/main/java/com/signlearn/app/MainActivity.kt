@@ -13,7 +13,7 @@ import com.signlearn.app.ui.theme.SignLearnTheme
 import com.signlearn.app.BuildConfig
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.appcheck.AppCheckProviderFactory
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 
 /**
@@ -38,10 +38,21 @@ class MainActivity : ComponentActivity() {
         // Inicializar Firebase (utiliza google-services.json)
         FirebaseApp.initializeApp(this)
         // Inicializar App Check: Debug en builds debug, Play Integrity en release
-        FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
-            if (BuildConfig.DEBUG) DebugAppCheckProviderFactory.getInstance()
-            else PlayIntegrityAppCheckProviderFactory.getInstance()
-        )
+        val providerFactory: AppCheckProviderFactory = if (BuildConfig.DEBUG) {
+            // Evitar referencia directa a clase debug en release: usar reflexión
+            runCatching {
+                val clazz = Class.forName("com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory")
+                val getInstance = clazz.getMethod("getInstance")
+                @Suppress("UNCHECKED_CAST")
+                getInstance.invoke(null) as AppCheckProviderFactory
+            }.getOrElse {
+                // Fallback si no está disponible: Play Integrity
+                PlayIntegrityAppCheckProviderFactory.getInstance()
+            }
+        } else {
+            PlayIntegrityAppCheckProviderFactory.getInstance()
+        }
+        FirebaseAppCheck.getInstance().installAppCheckProviderFactory(providerFactory)
 
         setContent {
             // Aplicar el tema SignLearn

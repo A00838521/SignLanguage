@@ -14,6 +14,7 @@ local.properties
 # Python venv
 .venv/
 venv/
+.venv311/
 
 # Credentials & secrets
 .env*
@@ -62,4 +63,8 @@ replay_pid*
 # Kotlin Gradle plugin data, see https://kotlinlang.org/docs/whatsnew20.html#new-directory-for-kotlin-data-in-gradle-projects
 .kotlin/
 
+# macOS system files
 .DS_Store
+
+# Model training data
+tools/work/downloads/

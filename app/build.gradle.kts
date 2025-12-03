@@ -1,4 +1,6 @@
 // build.gradle.kts (Module: app)
+import java.net.URL
+import java.io.InputStream
 
 plugins {
     alias(libs.plugins.android.application)
@@ -120,9 +122,8 @@ dependencies {
     implementation("androidx.camera:camera-view:1.3.1")
     implementation("androidx.camera:camera-extensions:1.3.1")
 
-    // ML Kit para reconocimiento de gestos/señas
-    implementation("com.google.mlkit:pose-detection:18.0.0-beta4")
-    implementation("com.google.mlkit:pose-detection-accurate:18.0.0-beta4")
+    // MediaPipe Tasks (Hand Landmarker)
+    implementation("com.google.mediapipe:tasks-vision:0.10.29")
 
     // TensorFlow Lite (opcional, para modelos personalizados)
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
@@ -174,4 +175,70 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}
+
+// Descarga automática del modelo MediaPipe Hand Landmarker en assets/
+tasks.register("downloadHandLandmarker") {
+    doLast {
+        val assetsDir = file("${projectDir}/src/main/assets")
+        val outFile = file("${projectDir}/src/main/assets/hand_landmarker.task")
+        if (!outFile.exists()) {
+            assetsDir.mkdirs()
+            val url = URL("https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task")
+            println("Descargando modelo MediaPipe Hand Landmarker...")
+            url.openStream().use { input: InputStream ->
+                outFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            println("Modelo descargado en: ${outFile}")
+        } else {
+            println("Modelo ya presente en assets: ${outFile}")
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("downloadHandLandmarker")
+}
+
+// Descarga automática del clasificador de gestos y labels en assets/
+tasks.register("downloadGestureModel") {
+    doLast {
+        val assetsDir = file("${projectDir}/src/main/assets")
+        val modelOut = file("${projectDir}/src/main/assets/gesture_frame_mlp.tflite")
+        val labelsOut = file("${projectDir}/src/main/assets/labels.json")
+        assetsDir.mkdirs()
+        // Primero intenta copiar desde el workspace local (pipeline Python)
+        val localModel = file("${rootProject.projectDir}/tools/work/gesture_frame_mlp.tflite")
+        val localLabels = file("${rootProject.projectDir}/tools/work/labels.json")
+        if (localModel.exists() && localLabels.exists()) {
+            println("Copiando artefactos locales del modelo de gestos...")
+            localModel.copyTo(modelOut, overwrite = true)
+            localLabels.copyTo(labelsOut, overwrite = true)
+        } else {
+            // Si no existen localmente, intenta descargar desde Firebase Storage (requiere token si es privado)
+            val base = System.getenv("GESTURE_MODEL_BASE")
+                ?: "https://firebasestorage.googleapis.com/v0/b/signlanguage-969d5.firebasestorage.app/o/models%2F"
+            val token = System.getenv("GESTURE_MODEL_TOKEN")
+            fun download(name: String, outFile: java.io.File) {
+                var urlStr = base + name + "?alt=media"
+                if (token != null && token.isNotBlank()) {
+                    urlStr += "&token=" + token
+                }
+                val url = URL(urlStr)
+                println("Descargando $name...")
+                url.openStream().use { input: InputStream ->
+                    outFile.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            download("gesture_frame_mlp.tflite", modelOut)
+            download("labels.json", labelsOut)
+        }
+        println("Modelo de gestos y labels listos en assets.")
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("downloadGestureModel")
 }
