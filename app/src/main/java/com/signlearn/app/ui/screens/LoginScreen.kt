@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.testTag
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
@@ -357,7 +358,8 @@ fun LoginScreen(
                         onDismissRequest = { showPrivacy = false; pendingAction = null },
                         title = { Text("Aviso de privacidad", style = MaterialTheme.typography.titleLarge) },
                         text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.testTag("privacy_content")
+                            ){
                                 Text(
                                     "Esto es lo esencial para usar SignLearn:",
                                     style = MaterialTheme.typography.bodyMedium,
