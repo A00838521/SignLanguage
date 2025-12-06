@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.signlearn.app.ui.theme.SignLearnTheme
 import com.signlearn.app.BuildConfig
+import com.signlearn.app.util.NetworkUtil
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.AppCheckProviderFactory
@@ -62,8 +65,9 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Iniciar la aplicación principal
-                    SignLearnApp()
+                    // Iniciar la aplicación principal con modo offline si no hay red
+                    val isOffline = remember { mutableStateOf(!NetworkUtil.isOnline(this@MainActivity)) }
+                    SignLearnApp(isOffline = isOffline.value)
                 }
             }
         }

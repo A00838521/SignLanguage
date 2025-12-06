@@ -24,18 +24,23 @@ import com.signlearn.app.data.firebase.ImageRepository
 import com.signlearn.app.data.firebase.LearningRepository
 import com.signlearn.app.ui.components.ExoLoopingVideoPlayer
 import android.net.Uri
+import android.util.Log
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, lessonId: String = "lesson_saludos_1", uid: String? = null) {
+fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, lessonId: String = "lesson_saludos_1", uid: String? = null, isOffline: Boolean = false) {
     val vm: CourseViewModel = viewModel()
     val exercises by vm.exercises.collectAsState()
     val loading by vm.loading.collectAsState()
     var localScore by remember { mutableStateOf(0) }
     var currentIndex by remember { mutableStateOf(0) }
+    var activeLessonId by remember { mutableStateOf(lessonId) }
     val current = exercises.getOrNull(currentIndex)
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
     var lastAnswerCorrect by remember { mutableStateOf<Boolean?>(null) }
+    var inputLocked by remember { mutableStateOf(false) }
+    // Estado de transición entre lecciones/categorías para mantener "Continuar" visible
+    var isAdvancing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val userRepo = remember { UserRepository() }
     val learningRepo = remember { LearningRepository() }
@@ -47,6 +52,7 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
             // Recuperar estado previo
             val state = runCatching { userRepo.getPracticeState(uid) }.getOrNull()
             if (state != null && state.lessonId.isNotBlank()) {
+                Log.d("PracticeFlow", "Restore practice state: lessonId=${state.lessonId} idx=${state.exerciseIndex}")
                 vm.loadExercises(state.lessonId)
                 currentIndex = state.exerciseIndex.coerceAtLeast(0)
             } else {
@@ -65,9 +71,13 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                         }
                     }
                 }
+                activeLessonId = resolvedLessonId
+                Log.d("PracticeFlow", "Fallback first lesson resolved: ${resolvedLessonId}")
                 vm.loadExercises(resolvedLessonId)
             }
         } else {
+            activeLessonId = lessonId
+            Log.d("PracticeFlow", "Direct lesson load: ${lessonId}")
             vm.loadExercises(lessonId)
         }
     }
@@ -106,6 +116,23 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Indicador visual de transición
+            if (isAdvancing) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = SignLearnShapes.CategoryButton
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                        Text("Cargando siguiente lección…", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
             if (loading) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
@@ -118,7 +145,7 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         // Mostrar medio (video o imagen) según mediaType
                         val mediaPath = current.mediaStoragePath ?: current.videoStoragePath
-                        if (mediaPath != null) {
+                        if (mediaPath != null && !isAdvancing) {
                             val mediaUriState = produceState<Uri?>(initialValue = null, key1 = mediaPath) {
                                 value = urlCache[mediaPath] ?: run {
                                     val uri = runCatching {
@@ -146,7 +173,8 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(200.dp),
-                                        autoPlay = true,
+                                        autoPlay = !inputLocked && !isAdvancing,
+                                        active = !isAdvancing,
                                         loop = true,
                                         useController = false
                                     )
@@ -170,12 +198,14 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                                                     correct = lastAnswerCorrect == true && idx == current.correctIndex,
                                                     incorrectSelected = selectedIndex == idx && lastAnswerCorrect == false,
                                                     onClick = {
+                                                        if (inputLocked) return@AnimatedOptionButton
                                                         selectedIndex = idx
                                                         val correct = idx == current.correctIndex
                                                         lastAnswerCorrect = correct
                                                         if (correct) {
+                                                            inputLocked = true
                                                             localScore += current.xpReward
-                                                            if (uid != null) {
+                                                            if (uid != null && !isOffline) {
                                                                 scope.launch { runCatching { userRepo.addXP(uid, current.xpReward) } }
                                                             }
                                                             scope.launch {
@@ -184,10 +214,22 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                                                                 lastAnswerCorrect = null
                                                                 if (currentIndex < exercises.lastIndex) {
                                                                     currentIndex += 1
+                                                                    Log.d("PracticeFlow", "Advance within lesson: lesson=${activeLessonId} nextIndex=${currentIndex}")
                                                                     if (uid != null) {
-                                                                        runCatching { userRepo.setPracticeState(uid, lessonId, currentIndex) }
+                                                                        runCatching { if (!isOffline) userRepo.setPracticeState(uid, activeLessonId, currentIndex) }
                                                                     }
+                                                                    inputLocked = false
                                                                 } else {
+                                                                    // Final de lección: marcar completada y regresar al mapa de curso
+                                                                    isAdvancing = true
+                                                                    Log.d("PracticeFlow", "End of lesson reached; isAdvancing=true, inputLocked=${'$'}inputLocked")
+                                                                    if (uid != null) {
+                                                                        runCatching { if (!isOffline) userRepo.markLessonCompleted(uid, activeLessonId, localScore) }
+                                                                        runCatching { if (!isOffline) userRepo.setPracticeState(uid, activeLessonId, 0) }
+                                                                        // Desbloquear categorías justo al completar
+                                                                        runCatching { if (!isOffline) vm.refreshCategories(uid) }
+                                                                    }
+                                                                    isAdvancing = false
                                                                     onCompleteExercise()
                                                                 }
                                                             }
@@ -211,20 +253,39 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                                         correct = lastAnswerCorrect == true && idx == current.correctIndex,
                                         incorrectSelected = selectedIndex == idx && lastAnswerCorrect == false,
                                         onClick = {
+                                            if (inputLocked) return@AnimatedOptionButton
                                             selectedIndex = idx
                                             val correct = idx == current.correctIndex
                                             lastAnswerCorrect = correct
                                             if (correct) {
+                                                inputLocked = true
                                                 localScore += current.xpReward
-                                                if (uid != null) scope.launch { runCatching { userRepo.addXP(uid, current.xpReward) } }
+                                                if (uid != null && !isOffline) {
+                                                    scope.launch { runCatching { userRepo.addXP(uid, current.xpReward) } }
+                                                }
                                                 scope.launch {
                                                     kotlinx.coroutines.delay(700)
                                                     selectedIndex = null
                                                     lastAnswerCorrect = null
                                                     if (currentIndex < exercises.lastIndex) {
                                                         currentIndex += 1
-                                                        if (uid != null) runCatching { userRepo.setPracticeState(uid, lessonId, currentIndex) }
-                                                    } else onCompleteExercise()
+                                                        Log.d("PracticeFlow", "Advance within lesson (list): lesson=${activeLessonId} nextIndex=${currentIndex}")
+                                                        if (uid != null) {
+                                                            runCatching { if (!isOffline) userRepo.setPracticeState(uid, activeLessonId, currentIndex) }
+                                                        }
+                                                        inputLocked = false
+                                                    } else {
+                                                        // Final de lección: marcar completada y regresar al mapa
+                                                        isAdvancing = true
+                                                        Log.d("PracticeFlow", "End of lesson reached (list); isAdvancing=true, inputLocked=${'$'}inputLocked")
+                                                        if (uid != null) {
+                                                            runCatching { if (!isOffline) userRepo.markLessonCompleted(uid, activeLessonId, localScore) }
+                                                            runCatching { if (!isOffline) userRepo.setPracticeState(uid, activeLessonId, 0) }
+                                                            runCatching { if (!isOffline) vm.refreshCategories(uid) }
+                                                        }
+                                                        isAdvancing = false
+                                                        onCompleteExercise()
+                                                    }
                                                 }
                                             }
                                         },
@@ -244,10 +305,63 @@ fun PracticeScreen(onNavigateBack: () -> Unit, onCompleteExercise: () -> Unit, l
                 Spacer(Modifier.height(12.dp))
                 Text("Ejercicio ${currentIndex + 1} de ${exercises.size}", style = MaterialTheme.typography.bodySmall)
                 Text("XP sesión: $localScore", style = MaterialTheme.typography.bodyMedium)
+                // Se elimina el botón "Continuar"; la navegación ocurre automáticamente al finalizar
             }
         }
     }
 
+}
+
+// Calcula el siguiente lessonId por convención:
+// - Global:  lesson_{slug}_{N} -> lesson_{slug}_{N+1}
+// - Usuario: user_{skillId}_lesson_{N} -> user_{skillId}_lesson_{N+1}
+private fun computeNextLessonId(current: String): String? {
+    return if (current.startsWith("user_")) {
+        val after = current.removePrefix("user_")
+        val parts = after.split("_lesson_")
+        if (parts.size == 2) {
+            val skillId = parts[0]
+            val n = parts[1].toIntOrNull() ?: return null
+            "user_${skillId}_lesson_${n + 1}"
+        } else null
+    } else if (current.startsWith("lesson_")) {
+        val lastUnderscore = current.lastIndexOf('_')
+        if (lastUnderscore > 0 && lastUnderscore < current.length - 1) {
+            val prefix = current.substring(0, lastUnderscore)
+            val num = current.substring(lastUnderscore + 1).toIntOrNull() ?: return null
+            "${prefix}_${num + 1}"
+        } else null
+    } else null
+}
+
+// Calcula la primera lección de la siguiente categoría según el orden pedagógico.
+// Si es contenido de usuario, asegura la generación de contenido y devuelve lesson_1 de la nueva categoría.
+private suspend fun computeNextCategoryFirstLesson(currentLessonId: String, uid: String?, repo: LearningRepository): String? {
+    val currentSlug: String? = if (currentLessonId.startsWith("lesson_")) {
+        val body = currentLessonId.removePrefix("lesson_")
+        if (body.contains('_')) body.substring(0, body.lastIndexOf('_')) else null
+    } else if (currentLessonId.startsWith("user_")) {
+        if (uid == null) return null
+        val after = currentLessonId.removePrefix("user_")
+        val skillId = after.substringBefore("_lesson_")
+        val prefix = "user_skill_${'$'}uid" + "_"
+        if (!skillId.startsWith(prefix)) return null
+        skillId.removePrefix(prefix)
+    } else null
+    currentSlug ?: return null
+
+    val order = LearningRepository.LEARNING_CATEGORY_ORDER
+    val idx = order.indexOf(currentSlug)
+    val nextSlug = if (idx >= 0 && idx < order.lastIndex) order[idx + 1] else null
+    nextSlug ?: return null
+
+    return if (currentLessonId.startsWith("user_")) {
+        if (uid == null) return null
+        runCatching { repo.ensureUserSkillContent(uid, nextSlug) }
+        "user_skill_${uid}_${nextSlug}_lesson_1"
+    } else {
+        "lesson_${nextSlug}_1"
+    }
 }
 
 @Composable

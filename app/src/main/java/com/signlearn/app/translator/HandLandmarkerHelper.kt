@@ -6,10 +6,12 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.framework.image.MediaImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.core.ImageProcessingOptions
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import java.io.ByteArrayOutputStream
@@ -32,6 +34,7 @@ class HandLandmarkerHelper(private val context: Context) {
         val confidence: Float,
         val imageWidth: Int,
         val imageHeight: Int,
+        val bitmap: Bitmap,
     )
 
     private var landmarker: HandLandmarker? = null
@@ -75,6 +78,8 @@ class HandLandmarkerHelper(private val context: Context) {
     private var lastWidth: Int = 0
     private var lastHeight: Int = 0
 
+    private var lastBitmap: Bitmap? = null
+
     private fun onResult(result: HandLandmarkerResult, input: MPImage) {
         val handsLandmarks = result.landmarks()?.mapIndexed { idx, list ->
             val points = list.map { p -> Landmark(p.x(), p.y()) }
@@ -86,26 +91,29 @@ class HandLandmarkerHelper(private val context: Context) {
             hands = handsLandmarks,
             confidence = conf,
             imageWidth = lastWidth,
-            imageHeight = lastHeight
+            imageHeight = lastHeight,
+            bitmap = lastBitmap ?: Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         )
         lastCallback?.invoke(out)
     }
 
-    fun analyze(imageProxy: ImageProxy, onResult: (Result?) -> Unit) {
+    fun analyze(imageProxy: ImageProxy, requireBitmap: Boolean = true, onResult: (Result?) -> Unit) {
         try {
             if (!isReady) {
                 onResult(null)
                 return
             }
             lastCallback = onResult
-
+            // Forzar ruta Bitmap ARGB_8888 para evitar mismatches de buffer en MediaImage
             val rotation = imageProxy.imageInfo.rotationDegrees
-            val bitmap = imageProxy.toBitmap()
-            val rotated = if (rotation != 0) bitmap.rotate(rotation.toFloat()) else bitmap
+            val ts = SystemClock.uptimeMillis()
+            val baseBmp = imageProxy.toBitmap()
+            val rotated = if (rotation != 0) baseBmp.rotate(rotation.toFloat()) else baseBmp
             lastWidth = rotated.width
             lastHeight = rotated.height
+            lastBitmap = if (requireBitmap) rotated else null
             val mpImage = BitmapImageBuilder(rotated).build()
-            landmarker?.detectAsync(mpImage, SystemClock.uptimeMillis())
+            landmarker?.detectAsync(mpImage, ts)
         } catch (t: Throwable) {
             Log.e(TAG, "analyze error", t)
             onResult(null)
@@ -124,46 +132,119 @@ class HandLandmarkerHelper(private val context: Context) {
 // --- Utilidades de conversión/rotación ---
 
 private fun ImageProxy.toBitmap(): Bitmap {
-    val nv21 = yuv420888toNv21()
-    val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-    val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
-    val imageBytes = out.toByteArray()
-    return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-}
+    // Fast path: RGBA_8888 from ImageAnalysis (one plane)
+    if (planes.size == 1 && planes[0].pixelStride == 4) {
+        val p0 = planes[0]
+        val buf = p0.buffer
+        val rowStride = p0.rowStride
+        val pixelStride = p0.pixelStride // should be 4 (RGBA)
+        val bytes = ByteArray(buf.remaining())
+        buf.get(bytes)
+        buf.rewind()
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        // Optimización: si el buffer es contiguo (rowStride == width*4), convertir en bloque
+        if (rowStride == width * 4) {
+            val out = IntArray(width * height)
+            var si = 0
+            var di = 0
+            val total = width * height
+            while (di < total) {
+                val r = bytes[si + 0].toInt() and 0xFF
+                val g = bytes[si + 1].toInt() and 0xFF
+                val b = bytes[si + 2].toInt() and 0xFF
+                val a = bytes[si + 3].toInt() and 0xFF
+                out[di] = (a shl 24) or (r shl 16) or (g shl 8) or b
+                si += pixelStride
+                di++
+            }
+            bmp.setPixels(out, 0, width, 0, 0, width, height)
+        } else {
+            // Copia por filas si hay padding de stride
+            val tmp = IntArray(width)
+            var srcOffset: Int
+            for (j in 0 until height) {
+                val rowStart = j * rowStride
+                srcOffset = rowStart
+                var i = 0
+                var col = 0
+                while (col < width) {
+                    val r = bytes[srcOffset + 0].toInt() and 0xFF
+                    val g = bytes[srcOffset + 1].toInt() and 0xFF
+                    val b = bytes[srcOffset + 2].toInt() and 0xFF
+                    val a = bytes[srcOffset + 3].toInt() and 0xFF
+                    tmp[i++] = (a shl 24) or (r shl 16) or (g shl 8) or b
+                    srcOffset += pixelStride
+                    col++
+                }
+                bmp.setPixels(tmp, 0, width, 0, j, width, 1)
+            }
+        }
+        return bmp
+    }
 
-private fun ImageProxy.yuv420888toNv21(): ByteArray {
-    val yBuffer = planes[0].buffer
-    val uBuffer = planes[1].buffer
-    val vBuffer = planes[2].buffer
+    // Fallback: YUV_420_888 manual conversion
+    val yPlane = planes[0]
+    val uPlane = planes[1]
+    val vPlane = planes[2]
 
+    val yBuffer = yPlane.buffer
+    val uBuffer = uPlane.buffer
+    val vBuffer = vPlane.buffer
+
+    // Copiar a arrays para acceso aleatorio rápido sin mover posiciones del buffer
     val ySize = yBuffer.remaining()
     val uSize = uBuffer.remaining()
     val vSize = vBuffer.remaining()
+    val yArr = ByteArray(ySize)
+    val uArr = ByteArray(uSize)
+    val vArr = ByteArray(vSize)
+    yBuffer.get(yArr)
+    uBuffer.get(uArr)
+    vBuffer.get(vArr)
+    yBuffer.rewind(); uBuffer.rewind(); vBuffer.rewind()
 
-    val nv21 = ByteArray(ySize + uSize + vSize)
+    val out = IntArray(width * height)
 
-    yBuffer.get(nv21, 0, ySize)
-    val chromaRowStride = planes[1].rowStride
-    val chromaRowPadding = chromaRowStride - width / 2
+    val yRowStride = yPlane.rowStride
+    val yPixelStride = yPlane.pixelStride
+    val uRowStride = uPlane.rowStride
+    val uPixelStride = uPlane.pixelStride
+    val vRowStride = vPlane.rowStride
+    val vPixelStride = vPlane.pixelStride
 
-    var offset = ySize
-    if (chromaRowPadding == 0) {
-        vBuffer.get(nv21, offset, vSize)
-        offset += vSize
-        uBuffer.get(nv21, offset, uSize)
-    } else {
-        for (row in 0 until height / 2) {
-            vBuffer.get(nv21, offset, width / 2)
-            offset += width / 2
-            vBuffer.position(vBuffer.position() + chromaRowPadding)
+    var outIndex = 0
+    var yIndex: Int
+    var uIndex: Int
+    var vIndex: Int
 
-            uBuffer.get(nv21, offset, width / 2)
-            offset += width / 2
-            uBuffer.position(uBuffer.position() + chromaRowPadding)
+    fun clamp(v: Int) = if (v < 0) 0 else if (v > 255) 255 else v
+
+    for (j in 0 until height) {
+        val yRow = j * yRowStride
+        val uRow = (j / 2) * uRowStride
+        val vRow = (j / 2) * vRowStride
+        for (i in 0 until width) {
+            yIndex = yRow + i * yPixelStride
+            uIndex = uRow + (i / 2) * uPixelStride
+            vIndex = vRow + (i / 2) * vPixelStride
+
+            val y = (yArr[yIndex].toInt() and 0xFF)
+            val u = (uArr[uIndex].toInt() and 0xFF)
+            val v = (vArr[vIndex].toInt() and 0xFF)
+
+            val c = y - 16
+            val d = u - 128
+            val e = v - 128
+            var r = (298 * c + 409 * e + 128) shr 8
+            var g = (298 * c - 100 * d - 208 * e + 128) shr 8
+            var b = (298 * c + 516 * d + 128) shr 8
+            r = clamp(r); g = clamp(g); b = clamp(b)
+            out[outIndex++] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
     }
-    return nv21
+    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    bmp.setPixels(out, 0, width, 0, 0, width, height)
+    return bmp
 }
 
 private fun Bitmap.rotate(degrees: Float): Bitmap {

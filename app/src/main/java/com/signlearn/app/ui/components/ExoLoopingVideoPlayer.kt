@@ -21,23 +21,36 @@ fun ExoLoopingVideoPlayer(
     modifier: Modifier = Modifier,
     autoPlay: Boolean = true,
     loop: Boolean = true,
-    useController: Boolean = false
+    useController: Boolean = false,
+    active: Boolean = true
 ) {
     var player by remember { mutableStateOf<ExoPlayer?>(null) }
     val context = LocalContext.current
 
-    DisposableEffect(uri) {
-        val exo = ExoPlayer.Builder(context).build().apply {
-            val item = MediaItem.fromUri(uri)
-            setMediaItem(item)
-            repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            prepare()
-            if (autoPlay) playWhenReady = true
-        }
-        player = exo
-        onDispose {
-            exo.stop()
-            exo.release()
+    // Crear/liberar el player basado en `active`
+    DisposableEffect(uri, active) {
+        if (active) {
+            val exo = ExoPlayer.Builder(context).build().apply {
+                val item = MediaItem.fromUri(uri)
+                setMediaItem(item)
+                repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                prepare()
+                playWhenReady = autoPlay
+            }
+            player = exo
+            onDispose {
+                exo.stop()
+                exo.release()
+                player = null
+            }
+        } else {
+            val exo = player
+            if (exo != null) {
+                exo.stop()
+                exo.release()
+                player = null
+            }
+            onDispose { }
         }
     }
 

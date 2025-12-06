@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
  * - Navegación entre pantallas
  */
 @Composable
-fun SignLearnApp() {
+fun SignLearnApp(isOffline: Boolean = false) {
     val navController = rememberNavController()
     val authViewModel: AuthViewModel = viewModel()
     val authState by authViewModel.state.collectAsStateWithLifecycle()
@@ -93,11 +93,11 @@ fun SignLearnApp() {
                     // Palabra del día
                     composable("word_of_day") {
                         // Cargar videos e imágenes y elegir deterministamente según día del año
-                        val videosState = androidx.compose.runtime.produceState<List<SignVideo>>(initialValue = emptyList(), key1 = authState) {
-                            value = runCatching { videoRepo.listVideos() }.getOrDefault(emptyList())
+                        val videosState = androidx.compose.runtime.produceState<List<SignVideo>>(initialValue = emptyList(), key1 = authState, key2 = isOffline) {
+                            value = if (isOffline) emptyList() else runCatching { videoRepo.listVideos() }.getOrDefault(emptyList())
                         }
-                        val imagesState = androidx.compose.runtime.produceState<List<com.signlearn.app.data.model.SignImage>>(initialValue = emptyList(), key1 = authState) {
-                            value = runCatching { imageRepo.listImages() }.getOrDefault(emptyList())
+                        val imagesState = androidx.compose.runtime.produceState<List<com.signlearn.app.data.model.SignImage>>(initialValue = emptyList(), key1 = authState, key2 = isOffline) {
+                            value = if (isOffline) emptyList() else runCatching { imageRepo.listImages() }.getOrDefault(emptyList())
                         }
                         data class MediaItem(val id: String, val title: String, val storagePath: String, val type: String)
                         val combined = remember(videosState.value, imagesState.value) {
@@ -121,16 +121,17 @@ fun SignLearnApp() {
                     // Dashboard principal
                     composable("dashboard") {
                         // Datos de usuario
-                        val dashboardData = androidx.compose.runtime.produceState(initialValue = DashboardData.guest(), key1 = authState) {
+                        val dashboardData = androidx.compose.runtime.produceState(initialValue = DashboardData.guest(), key1 = authState, key2 = isOffline) {
                             value = when (val st = authState) {
                                 is AuthState.Authenticated -> {
                                     val uid = st.user.uid
-                                    // asegurar perfil mínimo
-                                    runCatching { userRepo.ensureUserProfile(uid, st.user.displayName, st.user.email) }
-                                    runCatching { userRepo.updateStreak(uid) }
-                                    val profile = runCatching { userRepo.getUserProfile(uid) }.getOrNull()
-                                    val completed = runCatching { userRepo.getCompletedLessonsCount(uid) }.getOrDefault(0)
-                                    val weekly = runCatching { userRepo.getWeeklyStats(uid) }.getOrDefault(com.signlearn.app.data.model.WeeklyStats())
+                                    val profile = if (isOffline) null else runCatching {
+                                        userRepo.ensureUserProfile(uid, st.user.displayName, st.user.email)
+                                        userRepo.updateStreak(uid)
+                                        userRepo.getUserProfile(uid)
+                                    }.getOrNull()
+                                    val completed = if (isOffline) 0 else runCatching { userRepo.getCompletedLessonsCount(uid) }.getOrDefault(0)
+                                    val weekly = if (isOffline) com.signlearn.app.data.model.WeeklyStats() else runCatching { userRepo.getWeeklyStats(uid) }.getOrDefault(com.signlearn.app.data.model.WeeklyStats())
                                     DashboardData(
                                         userName = st.user.displayName ?: (profile?.displayName ?: "Tú"),
                                         totalPoints = profile?.totalPoints ?: 0,
@@ -209,9 +210,15 @@ fun SignLearnApp() {
                         val lessonIdArg = backStackEntry.arguments?.getString("lessonId") ?: "lesson_saludos_1"
                         PracticeScreen(
                             onNavigateBack = { navController.popBackStack() },
-                            onCompleteExercise = { },
+                            onCompleteExercise = {
+                                // Regresar explícitamente al mapa del curso al finalizar
+                                navController.navigate("course_map") {
+                                    popUpTo("practice") { inclusive = true }
+                                }
+                            },
                             lessonId = lessonIdArg,
-                            uid = (authState as? AuthState.Authenticated)?.user?.uid
+                            uid = (authState as? AuthState.Authenticated)?.user?.uid,
+                            isOffline = isOffline
                         )
                     }
 

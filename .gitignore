@@ -68,3 +68,5 @@ replay_pid*
 
 # Model training data
 tools/work/downloads/
+tools/work/Lengua de Senas Mexicana.v5i.coco/
+tools/work/lsm-merge-test.v1i.folder/

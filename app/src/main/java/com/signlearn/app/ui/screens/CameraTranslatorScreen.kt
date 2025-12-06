@@ -64,6 +64,9 @@ fun CameraTranslatorScreen(onNavigateBack: () -> Unit) {
     var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_FRONT) }
     var lastResult by remember { mutableStateOf<HLResult?>(null) }
     var alphabetOnly by remember { mutableStateOf(false) }
+    var debugText by remember { mutableStateOf("") }
+    var rawLabel by remember { mutableStateOf<String?>(null) }
+    var rawConfidence by remember { mutableStateOf(0f) }
 
     Scaffold(
         topBar = {
@@ -99,19 +102,39 @@ fun CameraTranslatorScreen(onNavigateBack: () -> Unit) {
                     )
 
                     // Overlay de landmarks
+                    val displayWord = rawLabel ?: uiState.word
                     LandmarksOverlay(
                         result = lastResult,
                         lensFacing = lensFacing,
-                        label = uiState.word,
+                        label = displayWord,
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    // HUD de depuración (predicción por frame / modo / estabilidad)
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (debugText.isNotBlank()) {
+                            Surface(
+                                tonalElevation = 2.dp,
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                                shape = SignLearnShapes.CategoryButton,
+                                modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+                            ) {
+                                Text(
+                                    text = debugText,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
 
                     // Controles y panel de resultado
                     CameraTranslatorControls(
                         isDetecting = isDetecting,
                         alphabetOnly = alphabetOnly,
-                        detectedSign = uiState.word?.let { DetectedSign(it, uiState.translation ?: it, "gesture") },
-                        confidence = uiState.confidence,
+                        detectedSign = displayWord?.let { DetectedSign(it, uiState.translation ?: it, "gesture") },
+                        confidence = rawLabel?.let { rawConfidence } ?: uiState.confidence,
                         onToggleDetection = {
                             isDetecting = !isDetecting
                             vm.setDetecting(isDetecting)
@@ -130,7 +153,7 @@ fun CameraTranslatorScreen(onNavigateBack: () -> Unit) {
                     LaunchedEffect(previewView, lensFacing, alphabetOnly) {
                         val provider = cameraProviderFuture.get()
                         val preview = androidx.camera.core.Preview.Builder()
-                            .setTargetResolution(Size(1280, 720))
+                            .setTargetResolution(Size(640, 480))
                             .build().also { it.setSurfaceProvider(previewView?.surfaceProvider) }
 
                         val selector = CameraSelector.Builder()
@@ -139,7 +162,8 @@ fun CameraTranslatorScreen(onNavigateBack: () -> Unit) {
 
                         val imageAnalyzer = ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .setTargetResolution(Size(1280, 720))
+                            .setTargetResolution(Size(640, 480))
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                             .build()
 
                         if (!classifier.isReady()) {
@@ -154,7 +178,14 @@ fun CameraTranslatorScreen(onNavigateBack: () -> Unit) {
                             onStable = { label, conf ->
                                 vm.publish(label?.takeIf { it.isNotBlank() }, conf)
                             },
-                            alphabetOnly = alphabetOnly
+                            alphabetOnly = alphabetOnly,
+                            mirrorForModel = (lensFacing == CameraSelector.LENS_FACING_FRONT),
+                            onDebug = { txt -> debugText = txt },
+                            onRaw = { lbl, conf ->
+                                rawLabel = lbl
+                                rawConfidence = conf
+                            },
+                            cacheDir = context.cacheDir
                         )
                         imageAnalyzer.setAnalyzer(cameraExecutor) { imageProxy ->
                             analyzer?.analyze(imageProxy, isDetecting)
@@ -264,13 +295,20 @@ private class FrameAnalyzer(
     private val onResult: (HLResult?) -> Unit,
     private val onStable: (label: String?, confidence: Float) -> Unit,
     private val alphabetOnly: Boolean = false,
+    private val mirrorForModel: Boolean = false,
+    private val onDebug: (String) -> Unit = {},
+    private val onRaw: (label: String?, confidence: Float) -> Unit = { _, _ -> },
+    private val cacheDir: java.io.File? = null
 ) {
-    // Buffer temporal para smoothing de etiquetas
-    private val windowSize = 10
+    // Buffer temporal para smoothing de etiquetas (más pequeño para menor costo)
+    private val windowSize = 5
     private val labelBuffer: ArrayDeque<String> = ArrayDeque()
     private val confBuffer: ArrayDeque<Float> = ArrayDeque()
     private var lastLandmarks: List<com.signlearn.app.translator.HandLandmarkerHelper.Landmark>? = null
     private var stillFrames: Int = 0
+    // Throttling para limitar la frecuencia de análisis y reducir GC
+        private var lastAnalyzeMs: Long = 0L
+        private val minIntervalMs: Long = 40L // alivio ligero de carga sin bajar resolución
 
     private fun pushPrediction(label: String, confidence: Float) {
         if (labelBuffer.size >= windowSize) labelBuffer.removeFirst()
@@ -279,13 +317,15 @@ private class FrameAnalyzer(
         confBuffer.addLast(confidence)
     }
 
-    private fun stablePrediction(minSupport: Int = windowSize / 2, minAvgConf: Float = 0.35f): Pair<String, Float>? {
+    private fun stablePrediction(minSupport: Int = 3, minAvgConf: Float = 0.30f): Pair<String, Float>? {
         if (labelBuffer.isEmpty()) return null
         val counts = labelBuffer.groupingBy { it }.eachCount()
         val best = counts.maxByOrNull { it.value } ?: return null
         val support = best.value
         val label = best.key
         val avgConf = if (confBuffer.isNotEmpty()) confBuffer.average().toFloat() else 0f
+        // Anti-bias: suprimir 'D' si la confianza media es baja
+        if (label.equals("D", ignoreCase = true) && avgConf < 0.35f) return null
         return if (support >= minSupport && avgConf >= minAvgConf) label to avgConf else null
     }
 
@@ -309,28 +349,56 @@ private class FrameAnalyzer(
                 imageProxy.close()
                 return
             }
-            handHelper.analyze(imageProxy) { r ->
+            // Saltar frames si no ha pasado el intervalo mínimo
+            val now = System.currentTimeMillis()
+            if (now - lastAnalyzeMs < minIntervalMs) {
+                imageProxy.close()
+                return
+            }
+            lastAnalyzeMs = now
+            val needBitmap = try {
+                val tfl = classifier
+                tfl != null && tfl.isReady() && tfl.expectsImage()
+            } catch (_: Throwable) { false }
+            handHelper.analyze(imageProxy, requireBitmap = needBitmap) { r ->
                 // Emitir resultados crudos para overlay
                 onResult(r)
                 // Aplicar clasificación + smoothing si hay manos
                 val tfl = classifier
                 if (r != null && r.hands.isNotEmpty() && tfl != null && tfl.isReady()) {
                     val lm = r.hands.first().landmarks
-                    val feats = landmarksToFeatures(lm)
-                    val pred = if (feats.isNotEmpty()) tfl.classify(feats) else null
+                    val expectsImg = tfl.expectsImage()
+                    val pred = if (expectsImg) {
+                        var crop = cropHandBitmap(r.bitmap, lm, 0.8f)
+                        if (mirrorForModel) crop = crop.flipHorizontally()
+                        tfl.classify(crop)
+                    } else {
+                        val feats = landmarksToFeatures(lm)
+                        if (feats.isNotEmpty()) tfl.classify(feats) else null
+                    }
+                    // Enviar Top-1 crudo siempre a la UI
+                    onRaw(pred?.label, pred?.confidence ?: 0f)
                     val allow = if (alphabetOnly) {
                         val still = isStill(lm)
                         if (still) stillFrames++ else stillFrames = 0
                         stillFrames >= 3 // requerir 3 frames consecutivos con poco movimiento
                     } else true
                     if (pred != null && allow) {
-                        pushPrediction(pred.label, pred.confidence)
+                        // Gating extra: ignorar predicciones con confianza cruda muy baja
+                        if (pred.confidence >= 0.10f) {
+                            pushPrediction(pred.label, pred.confidence)
+                        } else {
+                            pushPrediction("", 0f)
+                        }
                     } else {
                         pushPrediction("", 0f)
                     }
                     lastLandmarks = lm
+                    val avg = if (confBuffer.isNotEmpty()) confBuffer.average().toFloat() else 0f
                     val stable = stablePrediction()
                     onStable(stable?.first, stable?.second ?: 0f)
+                    // Debug HUD (ligero)
+                    onDebug("pred=" + (pred?.label ?: "-") + " " + String.format("%.2f", pred?.confidence ?: 0f) + " | stable=" + (stable?.first ?: "-") + " " + String.format("%.2f", stable?.second ?: 0f))
                 } else {
                     // cuando no hay manos visibles, limpiar suavemente
                     pushPrediction("", 0f)
@@ -338,10 +406,13 @@ private class FrameAnalyzer(
                     onStable(stable?.first, stable?.second ?: 0f)
                     lastLandmarks = null
                     stillFrames = 0
+                    onRaw(null, 0f)
+                    onDebug("")
                 }
             }
         } catch (t: Throwable) {
             onResult(null)
+            onDebug("error: ${t.message}")
         }
     }
 }
@@ -358,9 +429,64 @@ private fun landmarksToFeatures(landmarks: List<com.signlearn.app.translator.Han
     return feats.toFloatArray()
 }
 
+private fun cropHandBitmap(
+    src: android.graphics.Bitmap,
+    landmarks: List<com.signlearn.app.translator.HandLandmarkerHelper.Landmark>,
+    pad: Float = 0.4f
+): android.graphics.Bitmap {
+    if (landmarks.isEmpty()) return src
+    var minX = 1f
+    var minY = 1f
+    var maxX = 0f
+    var maxY = 0f
+    landmarks.forEach { p ->
+        if (p.x < minX) minX = p.x
+        if (p.y < minY) minY = p.y
+        if (p.x > maxX) maxX = p.x
+        if (p.y > maxY) maxY = p.y
+    }
+    val w = src.width
+    val h = src.height
+    var cx = ((minX + maxX) / 2f) * w
+    var cy = ((minY + maxY) / 2f) * h
+    var bw = (maxX - minX) * w
+    var bh = (maxY - minY) * h
+    var size = kotlin.math.max(bw, bh)
+    size *= (1f + pad)
+    // cuadrado con padding, limitar a bordes
+    var left = (cx - size / 2f).toInt()
+    var top = (cy - size / 2f).toInt()
+    var right = (cx + size / 2f).toInt()
+    var bottom = (cy + size / 2f).toInt()
+    if (left < 0) { right -= left; left = 0 }
+    if (top < 0) { bottom -= top; top = 0 }
+    if (right > w) { left -= (right - w); right = w }
+    if (bottom > h) { top -= (bottom - h); bottom = h }
+    left = left.coerceIn(0, w - 1)
+    top = top.coerceIn(0, h - 1)
+    right = right.coerceIn(left + 1, w)
+    bottom = bottom.coerceIn(top + 1, h)
+    val cw = right - left
+    val ch = bottom - top
+    return try {
+        android.graphics.Bitmap.createBitmap(src, left, top, cw, ch)
+    } catch (t: Throwable) {
+        src
+    }
+}
+
+private fun android.graphics.Bitmap.flipHorizontally(): android.graphics.Bitmap {
+    val m = android.graphics.Matrix().apply { preScale(-1f, 1f) }
+    return android.graphics.Bitmap.createBitmap(this, 0, 0, width, height, m, true)
+}
+
 @Composable
 private fun LandmarksOverlay(result: HLResult?, lensFacing: Int, label: String?, modifier: Modifier = Modifier) {
     if (result == null || result.hands.isEmpty()) return
+    // Throttling ligero del overlay para reducir coste de dibujo
+    var frameCounter by remember { mutableStateOf(0) }
+    frameCounter++
+    if (frameCounter % 2 != 0) return
     Canvas(modifier = modifier) {
         val viewW = size.width
         val viewH = size.height
@@ -373,7 +499,7 @@ private fun LandmarksOverlay(result: HLResult?, lensFacing: Int, label: String?,
         val dy = (viewH - rH) / 2f
         val mirrorX = lensFacing == CameraSelector.LENS_FACING_FRONT
 
-        val stroke = Stroke(width = 4f, cap = StrokeCap.Round)
+        val stroke = Stroke(width = 3f, cap = StrokeCap.Round)
         val pointColor = Color(0xFF00E5FF)
         val lineColor = Color(0xFF00B8D4)
 

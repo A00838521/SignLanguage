@@ -51,11 +51,9 @@ class TranslatorViewModel : ViewModel() {
     fun publish(label: String?, confidence: Float) {
         viewModelScope.launch {
             val smoothedLabel = smooth(label)
-            // En modo solo letras, aceptar solo etiquetas de una sola letra A-Z
+            // En modo solo letras, aceptar etiquetas tipo "x", "x-web", "Z", dígitos, etc.
             val filtered = smoothedLabel?.let {
-                if (_state.value.alphabetOnly) {
-                    if (it.length == 1 && it[0].isLetter() && it[0].isUpperCase()) it else null
-                } else it
+                if (_state.value.alphabetOnly) normalizeAlphabetLabel(it) else it
             }
             val entry = filtered?.let { labelMap[it] }
             _state.value = _state.value.copy(
@@ -77,5 +75,24 @@ class TranslatorViewModel : ViewModel() {
         // Mayoría simple en la ventana
         val counts = recentLabels.groupingBy { it }.eachCount()
         return counts.maxByOrNull { it.value }?.key
+    }
+
+    // Normaliza etiquetas del abecedario aceptando sufijos como "-web" y dígitos.
+    // Devuelve la etiqueta normalizada (una sola letra mayúscula o dígito) o null si no coincide.
+    private fun normalizeAlphabetLabel(raw: String): String? {
+        val lower = raw.lowercase().trim()
+        // Quitar sufijo "-web" si existe
+        val base = lower.removeSuffix("-web")
+        if (base.length == 1) {
+            val ch = base[0]
+            return if (ch.isLetter()) ch.uppercase() else if (ch.isDigit()) ch.toString() else null
+        }
+        // También aceptar formatos como "x.jpg", "z.mp4", etc.
+        val m = Regex("^([a-z0-9])[.].*").matchEntire(base)
+        if (m != null) {
+            val ch = m.groupValues[1][0]
+            return if (ch.isLetter()) ch.uppercase() else if (ch.isDigit()) ch.toString() else null
+        }
+        return null
     }
 }

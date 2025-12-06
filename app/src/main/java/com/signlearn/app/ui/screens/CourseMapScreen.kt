@@ -61,7 +61,7 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
             }
 
             // Categorías (derivadas dinámicamente de la colección `videos`)
-            Text("Categorías", style = MaterialTheme.typography.titleMedium)
+            Text("Categorías", style = MaterialTheme.typography.titleLarge)
 
             // Expandir la lista para ocupar el espacio restante
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -75,13 +75,13 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
                         ElevatedCard(
                             onClick = { if (unlocked) selectedCategory = c.slug },
                             colors = cardColors,
-                            modifier = Modifier.fillMaxWidth().height(92.dp)
+                            modifier = Modifier.fillMaxWidth().height(100.dp)
                         ) {
                             Column(
                                 Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
                                 verticalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text(c.title, style = MaterialTheme.typography.titleMedium)
+                                Text(c.title, style = MaterialTheme.typography.titleLarge)
                                 Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                                     Text("${c.count} ejercicios disponibles", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     if (!unlocked) Text("Bloqueado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
@@ -121,9 +121,9 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
                     items(skills) { s ->
                         val unlocked = unlockedSkills.contains(s.id)
                         val cardColors = if (unlocked) CardDefaults.cardColors() else CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        Card(onClick = { if (unlocked) { selectedSkill = s.id; vm.loadLessons(s.id, uid) } }, colors = cardColors) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(s.title, style = MaterialTheme.typography.bodyLarge)
+                        Card(onClick = { if (unlocked) { selectedSkill = s.id; vm.loadLessons(s.id, uid) } }, colors = cardColors, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                                Text(s.title, style = MaterialTheme.typography.titleMedium)
                                 if (!unlocked) Text("Bloqueado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                             }
                         }
@@ -139,10 +139,10 @@ fun CourseMapScreen(onNavigateBack: () -> Unit, onLessonClick: (String) -> Unit,
                     items(lessons) { les ->
                         val unlocked = unlockedLessons.contains(les.id)
                         val cardColors = if (unlocked) CardDefaults.cardColors() else CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        Card(onClick = { if (unlocked) onLessonClick(les.id) }, colors = cardColors) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(les.title, style = MaterialTheme.typography.bodyLarge)
-                                Text("~${les.estimatedMinutes} min", style = MaterialTheme.typography.labelSmall)
+                        Card(onClick = { if (unlocked) onLessonClick(les.id) }, colors = cardColors, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                                Text(les.title, style = MaterialTheme.typography.titleMedium)
+                                Text("~${les.estimatedMinutes} min", style = MaterialTheme.typography.labelMedium)
                                 if (!unlocked) Text("Bloqueado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                             }
                         }

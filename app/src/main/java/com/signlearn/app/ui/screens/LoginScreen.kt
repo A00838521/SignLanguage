@@ -71,6 +71,10 @@ fun LoginScreen(
         }
     }
 
+    // Estado para aviso de privacidad antes de registrar/primer acceso con Google
+    var showPrivacy by remember { mutableStateOf(false) }
+    var pendingAction: (() -> Unit)? by remember { mutableStateOf(null) }
+
     val infiniteTransition = rememberInfiniteTransition(label = "handAnimation")
 
     val hand1Offset by infiniteTransition.animateFloat(
@@ -243,7 +247,12 @@ fun LoginScreen(
                 ) { Text("Iniciar sesión") }
 
                 OutlinedButton(
-                    onClick = { onRegister(email.trim(), password) },
+                    onClick = {
+                        val e = email.trim()
+                        val p = password
+                        pendingAction = { onRegister(e, p) }
+                        showPrivacy = true
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
@@ -272,7 +281,9 @@ fun LoginScreen(
                 ) {
                     OutlinedButton(
                         onClick = {
-                            if (activity != null) {
+                            if (activity == null) return@OutlinedButton
+                            // Guardar acción pendiente y mostrar aviso de privacidad
+                            pendingAction = {
                                 scope.launch {
                                     isLoading = true
                                     localError = null
@@ -293,7 +304,6 @@ fun LoginScreen(
                                         // usuario canceló
                                     } catch (e: GetCredentialException) {
                                         Log.e("LoginScreen", "CredMan error", e)
-                                        // Fallback a GoogleSignInClient clásico
                                         try {
                                             val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
                                                 .requestIdToken(activity.getString(R.string.default_web_client_id))
@@ -311,6 +321,7 @@ fun LoginScreen(
                                     }
                                 }
                             }
+                            showPrivacy = true
                         },
                         modifier = Modifier.weight(1f),
                         shape = SignLearnShapes.CategoryButton
@@ -338,6 +349,61 @@ fun LoginScreen(
                             labelColor = MaterialTheme.colorScheme.error,
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
                         )
+                    )
+                }
+                // Dialog render
+                if (showPrivacy) {
+                    AlertDialog(
+                        onDismissRequest = { showPrivacy = false; pendingAction = null },
+                        title = { Text("Aviso de privacidad", style = MaterialTheme.typography.titleLarge) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "Esto es lo esencial para usar SignLearn:",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = Primary)
+                                    Text("La detección ocurre en tu dispositivo (cámara procesada localmente).", style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Default.CloudDone, contentDescription = null, tint = Tertiary)
+                                    Text("Guardamos tu progreso (puntos y lecciones) en Firebase para no perderlo.", style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    Text("Descargamos contenido (videos/imágenes) desde Firebase Storage.", style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Divider()
+                                Text(
+                                    "No vendemos tus datos. Puedes solicitar eliminar tu cuenta en Configuración.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val act = pendingAction
+                                    showPrivacy = false
+                                    pendingAction = null
+                                    act?.invoke()
+                                },
+                                shape = SignLearnShapes.CategoryButton,
+                                colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                            ) { Text("Aceptar") }
+                        },
+                        dismissButton = {
+                            OutlinedButton(
+                                onClick = {
+                                    showPrivacy = false
+                                    pendingAction = null
+                                },
+                                shape = SignLearnShapes.CategoryButton
+                            ) { Text("Cancelar") }
+                        }
                     )
                 }
             }
